@@ -44,260 +44,365 @@
         <div class="toc-title">目录</div>
         <ol>
           <li><a href="#算法概述">算法概述</a></li>
-          <li><a href="#算法原理">算法原理</a></li>
-          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
-          <li><a href="#使用示例">使用示例</a></li>
-          <li><a href="#参数说明">参数说明</a></li>
-          <li><a href="#适用场景">适用场景</a></li>
+          <li><a href="#详细原理">详细原理</a></li>
+          <li><a href="#在-llm-compressor-中的完整实现流程">在 LLM Compressor 中的完整实现流程</a></li>
+          <li><a href="#各场景详细使用指南">各场景详细使用指南</a></li>
+          <li><a href="#性能对比总结">性能对比总结</a></li>
         </ol>
       </div>
 <h1 id="rtnround-to-nearest最近舍入量化">RTN（Round-to-Nearest）最近舍入量化</h1>
 <h2 id="算法概述">算法概述</h2>
-<p>RTN 是最简单的量化方法——将每个权重值舍入到最近的量化级别。虽然简单，但对于 FP8 等高精度格式，RTN 已经能获得极佳效果。</p>
-<h2 id="算法原理">算法原理</h2>
-<h3 id="核心公式">核心公式</h3>
-<p>RTN 的量化过程可以分解为三步：</p>
-<p><strong>Step 1: 计算缩放因子</strong></p>
-<p>对称量化：</p>
+<p>RTN 是最简单也是最基础的量化方法——将每个权重值舍入到最近的量化级别。虽然简单，但对于高精度格式（如 FP8），RTN 已经能获得接近无损的效果。</p>
+<p>LLM Compressor 中 RTN 通过 <code>QuantizationModifier</code> 实现，支持多种 scheme 配置。</p>
+<p>---</p>
+<h2 id="详细原理">详细原理</h2>
+<h3 id="核心数学过程">核心数学过程</h3>
+<p>RTN 量化由三步组成：</p>
+<p><strong>Step 1: 确定量化范围与缩放因子</strong></p>
+<p>对称量化模式：</p>
 <p><div class="formula-block">\[s = \frac{\max(|W|)}{q_{max}}\]</div></p>
-<p>非对称量化：</p>
-<p><div class="formula-block">\[s = \frac{W_{max} - W_{min}}{q_{max} - q_{min}}, \quad z = q_{min} - \text{round}\left(\frac{W_{min}}{s}\right)\]</div></p>
-<p><strong>Step 2: 量化</strong></p>
-<p><div class="formula-block">\[W_q = \text{clamp}\left(\text{round}\left(\frac{W}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
-<p><strong>Step 3: 反量化（推理时）</strong></p>
-<p><div class="formula-block">\[\hat{W} = s \cdot (W_q - z)\]</div></p>
-<h3 id="为什么-fp8-rtn-就足够了">为什么 FP8 + RTN 就足够了？</h3>
-<ol>
-<li><strong>FP8 E4M3 有 448 个不同值</strong>：足以表示大多数权重分布</li>
-<li><strong>浮点量化天然适配</strong>：权重分布集中在 0 附近，FP8 的对数间距正好在 0 附近更密集</li>
-<li><strong>误差极小</strong>：FP8 的量化误差通常在 0.1% 以内</li>
-</ol>
-<h3 id="rtn-在低比特下的局限">RTN 在低比特下的局限</h3>
-<p>当降到 4-bit（仅 16 个量化级别）时：</p>
+<p>其中 \(q_{max}\) 取决于数据类型：</p>
 <ul>
-<li>舍入误差显著增大：\(E[\epsilon^2] = s^2/12\) 中的 \(s\) 变大</li>
-<li>异常权重（outlier）的截断误差严重</li>
-<li>各列误差独立累积，无补偿机制</li>
+<li>INT8 对称：\(q_{max} = 127\)</li>
+<li>INT4 对称：\(q_{max} = 7\)</li>
+<li>FP8 E4M3：\(q_{max} = 448\)</li>
 </ul>
-<p>这就是为什么 4-bit 量化通常需要 GPTQ/AWQ 等更精细的算法。</p>
-<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
-<h3 id="quantizationmodifier">QuantizationModifier</h3>
-<p>RTN 量化通过 <code>QuantizationModifier</code> 实现，它是所有量化方法的基础类：</p>
-<pre><code class="language-python">
-# src/llmcompressor/modifiers/quantization/quantization/base.py
-
-class QuantizationModifier(Modifier, QuantizationMixin):
-    """
-    标准后训练量化修改器。
-    使用 Observer 收集统计量，然后计算 scale/zero_point。
-    """
-    
-    def on_initialize(self, state, **kwargs):
-        # 将量化配置应用到目标模块
-        self.initialize_quantization(state.model)
-    
-    def on_start(self, state, **kwargs):
-        # 开始校准：注册 Observer 钩子
-        self.start_calibration(state.model)
-    
-    def on_event(self, state, event, **kwargs):
-        if event.type_ == EventType.SEQUENTIAL_EPOCH_END:
-            # 观察权重，计算量化参数
-            for module in quantized_modules:
-                observe(module, "weight")       # 让 Observer 看到权重
-                update_qparams(module, "weight") # 计算 scale/zp
-    
-    def on_end(self, state, **kwargs):
-        # 冻结量化：移除 Observer，固定参数
-        self.end_calibration(state.model)
+<p>非对称量化模式：</p>
+<p><div class="formula-block">\[s = \frac{W_{max} - W_{min}}{q_{max} - q_{min}}, \quad z = q_{min} - \text{round}\left(\frac{W_{min}}{s}\right)\]</div></p>
+<p><strong>Step 2: 量化（float → int/fp8）</strong></p>
+<p><div class="formula-block">\[W_q = \text{clamp}\left(\text{round}\left(\frac{W}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
+<p><strong>Step 3: 反量化（推理时恢复近似浮点值）</strong></p>
+<p><div class="formula-block">\[\hat{W} = s \cdot (W_q - z)\]</div></p>
+<h3 id="为什么-fp8_dynamic-rtn-就足够了">为什么 FP8_DYNAMIC + RTN 就足够了？</h3>
+<p><strong>FP8 E4M3 的精度分析</strong>：</p>
+<p>FP8 E4M3 格式有 4 位指数和 3 位尾数：</p>
+<ul>
+<li>可表示的不同非零值约 <strong>240 个</strong>（正负各 120）</li>
+<li>最大值 448，最小正规数 \(2^{-6}\)</li>
+<li>在 0 附近的精度比 INT8 高得多（对数间距）</li>
+</ul>
+<p>对于典型的 LLM 权重分布（均值约 0，标准差约 0.01-0.1）：</p>
+<ul>
+<li>大部分权重落在 [-0.5, 0.5] 范围内</li>
+<li>FP8 在这个范围内有约 100 个不同的表示</li>
+<li>相对量化误差 < 1%</li>
+</ul>
+<p><strong>量化误差的数学分析</strong>：</p>
+<p>对于 FP8，由于对数间距，在值 \(x\) 处的量化步长约为 \(x \cdot 2^{-3}\)（3 位尾数）。因此相对误差：</p>
+<p><div class="formula-block">\[\frac{|\Delta W|}{|W|} \approx \frac{1}{2} \cdot 2^{-3} = 6.25\%\]</div></p>
+<p>但由于 per-channel 量化，每个通道的 scale 适配其实际范围，实际误差远小于此理论上界。</p>
+<h3 id="fp8_dynamic-的工作机制详解">FP8_DYNAMIC 的工作机制详解</h3>
+<p>FP8_DYNAMIC scheme 实际包含两部分：</p>
+<p><strong>权重量化（静态，per-channel）</strong>：</p>
+<pre><code class="language-text">
+对于每一行 W[i, :]:
+    scale[i] = max(|W[i, :]|) / 448.0
+    W_q[i, :] = cast_to_fp8_e4m3(W[i, :] / scale[i])
 </code></pre>
-<h3 id="observer-如何工作">Observer 如何工作</h3>
-<p>以 MinMax Observer 为例：</p>
-<pre><code class="language-python">
-# src/llmcompressor/observers/min_max.py
-
-class MemorylessMinMaxObserver(Observer):
-    """只使用当前观测值的 min/max"""
-    
-    def update_statistics_from_observed(self, tensor):
-        # 直接用当前 tensor 的 min/max
-        self.min_vals = tensor.min(dim=-1).values
-        self.max_vals = tensor.max(dim=-1).values
-    
-    def get_qparams(self):
-        # 根据 min/max 计算 scale 和 zero_point
-        return calculate_qparams(self.min_vals, self.max_vals, self.quantization_args)
+<ul>
+<li>在量化时一次性完成，scale 保存在模型中</li>
+<li>推理时不需要重新计算</li>
+</ul>
+<p><strong>激活量化（动态，per-token）</strong>：</p>
+<pre><code class="language-text">
+对于每个输入 token X[t, :]:
+    scale[t] = max(|X[t, :]|) / 448.0   # 推理时实时计算
+    X_q[t, :] = cast_to_fp8_e4m3(X[t, :] / scale[t])
 </code></pre>
-<h3 id="data-free-模式">Data-Free 模式</h3>
-<p>当使用 FP8_DYNAMIC 等方案且无校准数据时：</p>
+<ul>
+<li>每次推理时动态计算 per-token scale</li>
+<li>不需要提前校准——适应任何输入分布</li>
+<li>这就是为什么 FP8_DYNAMIC 不需要校准数据</li>
+</ul>
+<p><strong>矩阵乘法执行</strong>：</p>
+<p><div class="formula-block">\[Y[t, i] = \text{scale\_x}[t] \cdot \text{scale\_w}[i] \cdot \sum_j X_q[t,j] \cdot W_q[i,j]\]</div></p>
+<p>GPU 执行 FP8×FP8 矩阵乘法（Hopper/Ada FP8 Tensor Core），然后乘以两个 scale 恢复正确数值范围。</p>
+<h3 id="fp8_block-的工作机制详解">FP8_BLOCK 的工作机制详解</h3>
+<p>FP8_BLOCK 是 DeepSeek-V3 采用的量化风格，更细粒度：</p>
+<p><strong>权重量化（block-wise，128×128 块）</strong>：</p>
+<pre><code class="language-text">
+将权重矩阵切分为 128×128 的块：
+W = [B_00  B_01  ...]
+    [B_10  B_11  ...]
+    [...]
+
+对于每个块 B[r,c]:
+    scale[r,c] = max(|B[r,c]|) / 448.0
+    B_q[r,c] = cast_to_fp8_e4m3(B[r,c] / scale[r,c])
+</code></pre>
+<ul>
+<li>比 per-channel 更细粒度（每 128 列一个独立 scale）</li>
+<li>权重中不同区域的量化更精确</li>
+</ul>
+<p><strong>激活量化（block-wise 动态）</strong>：</p>
+<pre><code class="language-text">
+将激活切分为 1×128 的块（沿隐藏维度每 128 个元素一个 scale）：
+对于 X[t, j*128 : (j+1)*128]:
+    scale[t,j] = max(|X[t, j*128:(j+1)*128]|) / 448.0
+    X_q[t, j*128:(j+1)*128] = cast_to_fp8(X / scale)
+</code></pre>
+<p><strong>与 FP8_DYNAMIC 的关键区别</strong>：</p>
+<table><thead><tr>
+<th>特性</th>
+<th>FP8_DYNAMIC</th>
+<th>FP8_BLOCK</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>权重 scale 粒度</td>
+<td>per-channel (每行 1 个 scale)</td>
+<td>per-block (每 128×128 一个)</td>
+</tr>
+<tr>
+<td>激活 scale 粒度</td>
+<td>per-token (每行 1 个)</td>
+<td>per-block (每 128 元素一个)</td>
+</tr>
+<tr>
+<td>精度</td>
+<td>高</td>
+<td>更高（scale 粒度更细）</td>
+</tr>
+<tr>
+<td>兼容内核</td>
+<td>标准 FP8 GEMM</td>
+<td>DeepGEMM / Block FP8 GEMM</td>
+</tr>
+<tr>
+<td>存储开销</td>
+<td>scale 很少</td>
+<td>scale 稍多（但仍为 FP32）</td>
+</tr>
+</tbody></table>
+<h3 id="w4a16-rtn-的精度问题详解">W4A16 RTN 的精度问题详解</h3>
+<p>当用 RTN 做 4-bit 量化时，仅有 <strong>16 个量化级别</strong>（INT4 对称：-8 到 7）：</p>
+<pre><code class="language-text">
+原始权重: [-0.23, 0.15, -0.08, 0.31, -0.45, 0.02, ...]
+
+scale = 0.45 / 7 = 0.064 (per-group, group_size=128)
+
+量化:
+  -0.23 / 0.064 = -3.59 → round → -4 → 反量化 = -0.256 (误差 0.026)
+   0.15 / 0.064 =  2.34 → round →  2 → 反量化 =  0.128 (误差 0.022)
+  -0.45 / 0.064 = -7.03 → round → -7 → 反量化 = -0.448 (误差 0.002)
+   0.02 / 0.064 =  0.31 → round →  0 → 反量化 =  0.000 (误差 0.020)
+</code></pre>
+<p><strong>问题</strong>：</p>
 <ol>
-<li>权重量化：直接从权重值计算 scale（<code>observe(weight)</code> → <code>update_qparams()</code>）</li>
-<li>激活量化：标记为 <code>dynamic=True</code>，在推理时动态计算 per-token scale</li>
-<li>Pipeline 选择：自动使用 <code>DataFreePipeline</code></li>
+<li>量化步长 = 0.064，对于小权重（如 0.02），相对误差可达 100%</li>
+<li>所有值被迫映射到 16 个级别，大量信息丢失</li>
+<li>误差在各层之间<strong>无补偿</strong>，逐层累积</li>
 </ol>
-<h2 id="使用示例">使用示例</h2>
-<h3 id="示例-1fp8-动态量化无需校准数据">示例 1：FP8 动态量化（无需校准数据）</h3>
+<p>这就是为什么 4-bit 部署需要 GPTQ/AWQ——它们通过误差补偿和通道保护来克服这些问题。</p>
+<p>---</p>
+<h2 id="在-llm-compressor-中的完整实现流程">在 LLM Compressor 中的完整实现流程</h2>
+<h3 id="quantizationmodifier-的内部机制">QuantizationModifier 的内部机制</h3>
 <pre><code class="language-python">
-from transformers import AutoModelForCausalLM
+# 完整的 RTN 量化执行流程
+
+class QuantizationModifier:
+    
+    def on_initialize(self, state):
+        """Phase 1: 将量化配置注入模型"""
+        model = state.model
+        for name, module in model.named_modules():
+            if should_quantize(module, self.targets, self.ignore):
+                # 为模块附加量化 scheme
+                module.quantization_scheme = resolve_scheme(self.scheme)
+                # 创建 Observer 实例
+                if module.quantization_scheme.weights:
+                    module.weight_observer = create_observer(
+                        "memoryless_minmax",  # 权重默认用 memoryless
+                        module.quantization_scheme.weights
+                    )
+                if module.quantization_scheme.input_activations:
+                    module.input_observer = create_observer(
+                        "minmax",
+                        module.quantization_scheme.input_activations
+                    )
+    
+    def on_start(self, state):
+        """Phase 2: 注册校准钩子"""
+        for module in quantized_modules:
+            if has_input_observer(module):
+                # 前向钩子：每次推理时 Observer 观测输入激活
+                register_hook(module, calibrate_input_hook, "forward_pre")
+            if has_output_observer(module):
+                register_hook(module, calibrate_output_hook, "forward")
+    
+    def on_event(self, state, event):
+        """Phase 3: 在校准完成后计算量化参数"""
+        if event.type_ == SEQUENTIAL_EPOCH_END:
+            for module in quantized_modules:
+                # --- 权重量化 ---
+                module.weight_observer(module.weight)
+                qparams = module.weight_observer.get_qparams()
+                module.weight_scale = qparams["scale"]
+                module.weight_zero_point = qparams["zero_point"]
+                
+                # --- 激活量化（如果有校准数据）---
+                if has_input_observer(module):
+                    qparams = module.input_observer.get_qparams()
+                    module.input_scale = qparams["scale"]
+    
+    def on_end(self, state):
+        """Phase 4: 冻结——移除 Observer，固定参数"""
+        for module in quantized_modules:
+            del module.weight_observer
+            if hasattr(module, 'input_observer'):
+                del module.input_observer
+            remove_all_hooks()
+</code></pre>
+<h3 id="datafree-pipeline-的工作方式">DataFree Pipeline 的工作方式</h3>
+<p>当不提供校准数据时（FP8_DYNAMIC、FP8_BLOCK）：</p>
+<pre><code class="language-python">
+class DataFreePipeline:
+    def run(self, model, modifiers):
+        """无前向传播，直接初始化和完成"""
+        for mod in modifiers:
+            mod.on_initialize(state)
+        
+        for mod in modifiers:
+            mod.on_start(state)
+            mod.on_event(state, SEQUENTIAL_EPOCH_END)
+            mod.on_end(state)
+        
+        for mod in modifiers:
+            mod.on_finalize(state)
+</code></pre>
+<p>---</p>
+<h2 id="各场景详细使用指南">各场景详细使用指南</h2>
+<h3 id="场景-1快速部署精度要求高-fp8_dynamic">场景 1：快速部署，精度要求高 → FP8_DYNAMIC</h3>
+<p><strong>适用条件</strong>：</p>
+<ul>
+<li>有 Hopper (H100) 或 Ada (RTX 4090/L40S) GPU</li>
+<li>希望快速量化，不想准备校准数据</li>
+<li>可以接受约 2× 压缩</li>
+<li>精度损失需要极小（perplexity 增加 < 0.1）</li>
+</ul>
+<pre><code class="language-python">
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from compressed_tensors.offload import dispatch_model
 from llmcompressor import oneshot
 from llmcompressor.modifiers.quantization import QuantizationModifier
 
-model = AutoModelForCausalLM.from_pretrained(
-    "meta-llama/Meta-Llama-3-8B-Instruct",
-    dtype="auto",
-)
+MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype="auto")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
-# FP8 动态量化：权重静态 FP8，激活动态 per-token FP8
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="FP8_DYNAMIC",
     ignore=["lm_head"],
 )
 
-# 无需 dataset 参数 — 直接量化
 oneshot(model=model, recipe=recipe)
+
+# 验证
+dispatch_model(model)
+input_ids = tokenizer("Hello", return_tensors="pt").input_ids.to(model.device)
+output = model.generate(input_ids, max_new_tokens=20)
+print(tokenizer.decode(output[0]))
+
 model.save_pretrained("Llama-3-8B-FP8-Dynamic")
+tokenizer.save_pretrained("Llama-3-8B-FP8-Dynamic")
 </code></pre>
-<h3 id="示例-2fp8-block-量化">示例 2：FP8 Block 量化</h3>
+<h3 id="场景-2deepseek-风格部署-fp8_block">场景 2：DeepSeek 风格部署 → FP8_BLOCK</h3>
 <pre><code class="language-python">
 recipe = QuantizationModifier(
     targets="Linear",
-    scheme="FP8_BLOCK",  # Block-wise FP8 (类似 DeepSeek 风格)
-    ignore=["lm_head", "re:.*mlp.gate$"],  # 忽略门控层
+    scheme="FP8_BLOCK",
+    ignore=["lm_head", "re:.*mlp.gate$"],
 )
-
 oneshot(model=model, recipe=recipe)
 </code></pre>
-<h3 id="示例-3带校准的-w8a8-int8-量化">示例 3：带校准的 W8A8 INT8 量化</h3>
-<pre><code class="language-python">
-from datasets import load_dataset
-
-# 准备校准数据
-dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
-
-recipe = QuantizationModifier(
-    targets="Linear",
-    scheme="W8A8",      # INT8 权重 + INT8 激活
-    ignore=["lm_head"],
-)
-
-oneshot(
-    model=model,
-    recipe=recipe,
-    dataset=dataset,
-    num_calibration_samples=512,
-    max_seq_length=2048,
-)
-</code></pre>
-<h3 id="示例-4w4a16-rtn-量化精度较低仅用于快速测试">示例 4：W4A16 RTN 量化（精度较低，仅用于快速测试）</h3>
+<h3 id="场景-3快速验证-w4a16-rtn仅测试用">场景 3：快速验证 → W4A16 RTN（仅测试用）</h3>
 <pre><code class="language-python">
 recipe = QuantizationModifier(
     targets="Linear",
-    scheme="W4A16",     # 4-bit 权重，FP16 激活
+    scheme="W4A16",
     ignore=["lm_head"],
 )
-
-# 注意：4-bit RTN 精度不如 GPTQ/AWQ，生产环境建议使用后者
 oneshot(model=model, recipe=recipe)
+# 注意：生产环境请用 GPTQ/AWQ！
 </code></pre>
-<h2 id="参数说明">参数说明</h2>
+<h3 id="场景-4生产-4-bit-gptq">场景 4：生产 4-bit → GPTQ</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+recipe = GPTQModifier(
+    targets="Linear", scheme="W4A16", ignore=["lm_head"],
+    block_size=128, dampening_frac=0.01, actorder="static",
+)
+oneshot(model=model, recipe=recipe, dataset=dataset,
+        num_calibration_samples=512, max_seq_length=2048)
+</code></pre>
+<p>---</p>
+<h2 id="性能对比总结">性能对比总结</h2>
 <table><thead><tr>
-<th>参数</th>
-<th>类型</th>
-<th>说明</th>
+<th>方法</th>
+<th>压缩比</th>
+<th>量化时间(8B)</th>
+<th>Perplexity 增加</th>
+<th>需要数据</th>
+<th>推荐场景</th>
 </tr></thead>
 <tbody>
 <tr>
-<td><code>targets</code></td>
-<td>str/list</td>
-<td>量化目标层，通常为 <code>"Linear"</code></td>
+<td>FP8_DYNAMIC RTN</td>
+<td>2×</td>
+<td>~1 分钟</td>
+<td>< 0.05</td>
+<td>否</td>
+<td><strong>快速部署，精度高</strong></td>
 </tr>
 <tr>
-<td><code>scheme</code></td>
-<td>str</td>
-<td>量化方案预设名（见下表）</td>
+<td>FP8_BLOCK RTN</td>
+<td>2×</td>
+<td>~1 分钟</td>
+<td>< 0.03</td>
+<td>否</td>
+<td><strong>DeepSeek 风格</strong></td>
 </tr>
 <tr>
-<td><code>ignore</code></td>
-<td>list</td>
-<td>不量化的层，支持正则 <code>"re:..."</code></td>
+<td>W8A8 RTN</td>
+<td>2×</td>
+<td>~5 分钟</td>
+<td>0.1-0.3</td>
+<td>是</td>
+<td>INT8 加速</td>
 </tr>
 <tr>
-<td><code>kv_cache_scheme</code></td>
-<td>dict</td>
-<td>KV Cache 量化配置</td>
-</tr>
-<tr>
-<td><code>observer</code></td>
-<td>str/dict</td>
-<td>Observer 类型选择</td>
-</tr>
-</tbody></table>
-<h3 id="常用-scheme-预设">常用 Scheme 预设</h3>
-<table><thead><tr>
-<th>Scheme</th>
-<th>权重</th>
-<th>激活</th>
-<th>策略</th>
-</tr></thead>
-<tbody>
-<tr>
-<td><code>FP8_DYNAMIC</code></td>
-<td>FP8 per-channel</td>
-<td>FP8 per-token dynamic</td>
-<td>无需校准</td>
-</tr>
-<tr>
-<td><code>FP8_BLOCK</code></td>
-<td>FP8 block (128×128)</td>
-<td>FP8 block dynamic</td>
-<td>无需校准</td>
-</tr>
-<tr>
-<td><code>W8A8</code></td>
-<td>INT8 per-channel</td>
-<td>INT8 per-token dynamic</td>
-<td>需校准</td>
-</tr>
-<tr>
-<td><code>W4A16</code></td>
-<td>INT4 per-group(128)</td>
-<td>FP16</td>
-<td>建议用 GPTQ</td>
-</tr>
-<tr>
-<td><code>W8A16</code></td>
-<td>INT8 per-channel</td>
-<td>FP16</td>
-<td>无需校准</td>
-</tr>
-</tbody></table>
-<h2 id="适用场景">适用场景</h2>
-<table><thead><tr>
-<th>场景</th>
-<th>推荐方案</th>
-<th>原因</th>
-</tr></thead>
-<tbody>
-<tr>
-<td>快速部署，精度要求高</td>
-<td>FP8_DYNAMIC</td>
-<td>几乎无损，无需校准</td>
-</tr>
-<tr>
-<td>DeepSeek 风格部署</td>
-<td>FP8_BLOCK</td>
-<td>Block FP8 兼容 DeepGEMM</td>
-</tr>
-<tr>
-<td>快速验证量化效果</td>
 <td>W4A16 RTN</td>
-<td>速度最快，但精度有限</td>
+<td>3.9×</td>
+<td>~1 分钟</td>
+<td>0.5-1.0</td>
+<td>否</td>
+<td><strong>仅快速验证</strong></td>
 </tr>
 <tr>
-<td>生产 4-bit 部署</td>
-<td>GPTQ/AWQ（非 RTN）</td>
-<td>4-bit RTN 精度不足</td>
+<td>W4A16 GPTQ</td>
+<td>3.9×</td>
+<td>~30 分钟</td>
+<td>0.1-0.2</td>
+<td>是</td>
+<td><strong>生产 4-bit</strong></td>
+</tr>
+<tr>
+<td>W4A16 AWQ</td>
+<td>3.9×</td>
+<td>~20 分钟</td>
+<td>0.1-0.2</td>
+<td>是</td>
+<td><strong>生产 4-bit</strong></td>
+</tr>
+<tr>
+<td>W4A16 AutoRound</td>
+<td>3.9×</td>
+<td>~60 分钟</td>
+<td>0.08-0.15</td>
+<td>是</td>
+<td>追求极致精度</td>
 </tr>
 </tbody></table>
 

@@ -28,6 +28,26 @@ $$E[\Delta y^2] = \sum_j (\Delta w_j)^2 \cdot E[x_j^2] = \sum_j (\Delta w_j)^2 \
 
 因此，$E[x_j^2]$ 大的通道，其量化误差会被更大地放大。
 
+### 详细推导：为什么是 $E[x_j^2]$ 而不是 $E[|x_j|]$ 或 $\text{Var}(x_j)$
+
+**推导输出 MSE**：
+
+$$E[||\Delta y||^2] = E\left[\left(\sum_j \Delta w_j \cdot x_j\right)^2\right]$$
+
+展开平方：
+
+$$= E\left[\sum_j \sum_k \Delta w_j \cdot \Delta w_k \cdot x_j \cdot x_k\right]$$
+
+如果假设不同通道的激活是**近似不相关**的（$E[x_j x_k] \approx 0$ 当 $j \neq k$），则交叉项消失：
+
+$$\approx \sum_j (\Delta w_j)^2 \cdot E[x_j^2]$$
+
+这就是为什么选择 $E[x_j^2]$（二阶矩）作为重要性度量：
+
+- $E[|x_j|]$（一阶绝对矩）：不能正确反映平方误差的放大效应
+- $\text{Var}(x_j)$：不包含均值的贡献（如果激活均值非零，均值部分也会放大误差）
+- $E[x_j^2] = \text{Var}(x_j) + (E[x_j])^2$：完整捕获了激活的"能量"
+
 ### 加权 MSE 目标
 
 传统 MSE Observer 的目标：
@@ -40,7 +60,154 @@ $$\min_{s, z} \sum_j \text{importance}_j \cdot (w_j - \hat{w}_j)^2$$
 
 这使得高重要性通道获得更小的量化误差。
 
-### Grid Search 中的重要性加权
+### 直觉解释：加权 MSE 的几何意义
+
+传统 MSE 将所有通道的误差视为等价——在参数空间中定义了一个"圆形"等误差面。加权 MSE 将等误差面变成"椭圆形"：高重要性方向上容许的偏差更小，低重要性方向上容许的偏差更大。
+
+量化是一个离散化过程，量化后的值必须落在量化网格点上。加权 MSE 使得量化参数（scale, zero_point）的选择倾向于让高重要性通道恰好落在网格点附近，代价是低重要性通道可能偏离网格点更远。
+
+---
+
+## 完整数值示例
+
+### 问题设置
+
+考虑一个简单的线性层，输入维度 4，输出维度 1。
+
+**权重向量**：$w = [0.8, -0.3, 1.5, 0.1]$
+
+**通过校准收集的激活统计**（假设 100 个样本）：
+
+```
+通道 0: E[x_0^2] = 0.5    (正常通道)
+通道 1: E[x_1^2] = 0.2    (不太重要)
+通道 2: E[x_2^2] = 8.0    (高重要性通道！激活经常很大)
+通道 3: E[x_3^2] = 0.1    (最不重要)
+```
+
+**重要性向量**：$\text{imp} = [0.5, 0.2, 8.0, 0.1]$
+
+### 对比：均匀 MSE vs 重要性加权 MSE
+
+假设使用 INT4 对称量化（值域 [-8, 7]）。
+
+**Grid Search 过程**：
+
+尝试不同的 scale 值，对于每个 scale 计算量化后的误差。
+
+**候选 1：scale = 0.25**（范围 [-2.0, 1.75]）
+```
+w = [0.8, -0.3, 1.5, 0.1]
+w_q = [round(0.8/0.25)*0.25, round(-0.3/0.25)*0.25, round(1.5/0.25)*0.25, round(0.1/0.25)*0.25]
+    = [3*0.25, -1*0.25, 6*0.25, 0*0.25]
+    = [0.75, -0.25, 1.50, 0.0]
+
+误差: Δw = [0.05, -0.05, 0.0, 0.1]
+
+均匀 MSE = 0.05² + 0.05² + 0² + 0.1² = 0.0025 + 0.0025 + 0 + 0.01 = 0.015
+加权 MSE = 0.5×0.05² + 0.2×0.05² + 8.0×0² + 0.1×0.1²
+         = 0.00125 + 0.0005 + 0 + 0.001 = 0.00275
+```
+
+**候选 2：scale = 0.20**（范围 [-1.6, 1.4]）
+```
+w = [0.8, -0.3, 1.5, 0.1]
+w_q = [round(0.8/0.2)*0.2, round(-0.3/0.2)*0.2, round(1.5/0.2)*0.2, round(0.1/0.2)*0.2]
+    = [4*0.2, -2*0.2, 7*0.2, 1*0.2]
+    = [0.8, -0.4, 1.4, 0.2]
+
+误差: Δw = [0.0, 0.1, -0.1, 0.1]
+
+均匀 MSE = 0² + 0.1² + 0.1² + 0.1² = 0 + 0.01 + 0.01 + 0.01 = 0.03
+加权 MSE = 0.5×0² + 0.2×0.1² + 8.0×0.1² + 0.1×0.1²
+         = 0 + 0.002 + 0.08 + 0.001 = 0.083
+```
+
+**候选 3：scale = 0.22**（范围 [-1.76, 1.54]）
+```
+w_q = [round(0.8/0.22)*0.22, round(-0.3/0.22)*0.22, round(1.5/0.22)*0.22, round(0.1/0.22)*0.22]
+    = [4*0.22, -1*0.22, 7*0.22, 0*0.22]
+    = [0.88, -0.22, 1.54, 0.0]
+
+误差: Δw = [-0.08, -0.08, -0.04, 0.1]
+
+均匀 MSE = 0.08² + 0.08² + 0.04² + 0.1² = 0.0064+0.0064+0.0016+0.01 = 0.0244
+加权 MSE = 0.5×0.08² + 0.2×0.08² + 8.0×0.04² + 0.1×0.1²
+         = 0.0032 + 0.00128 + 0.0128 + 0.001 = 0.01828
+```
+
+### 对比结果
+
+| scale | 均匀 MSE | 加权 MSE | 通道 2 误差 |
+|-------|---------|---------|-----------|
+| 0.25 | **0.015** | **0.00275** | 0.0 |
+| 0.20 | 0.030 | 0.083 | 0.1 |
+| 0.22 | 0.024 | 0.018 | 0.04 |
+
+**关键发现**：
+
+- **均匀 MSE** 选择 scale=0.25（总误差最小 0.015）
+- **加权 MSE** 也选择 scale=0.25（加权误差最小 0.00275）
+
+在这个例子中两者碰巧选择了同一个 scale。但关键区别出现在更紧张的场景中——当最优 scale 需要在"保护通道 2"和"保护其他通道"之间做权衡时，加权 MSE 会更倾向于保护通道 2。
+
+### 更极端的例子：权衡场景
+
+假设权重为 $w = [0.6, -0.3, 1.9, 0.1]$（通道 2 的值更大），重要性同前。
+
+**候选 A：scale = 0.27**（范围 [-2.16, 1.89]）
+```
+w_q = [2*0.27, -1*0.27, 7*0.27, 0*0.27] = [0.54, -0.27, 1.89, 0.0]
+Δw = [0.06, -0.03, 0.01, 0.1]
+
+均匀 MSE = 0.0036 + 0.0009 + 0.0001 + 0.01 = 0.0146
+加权 MSE = 0.5×0.0036 + 0.2×0.0009 + 8.0×0.0001 + 0.1×0.01
+         = 0.0018 + 0.00018 + 0.0008 + 0.001 = 0.00378
+```
+
+**候选 B：scale = 0.30**（范围 [-2.4, 2.1]）
+```
+w_q = [2*0.30, -1*0.30, 6*0.30, 0*0.30] = [0.60, -0.30, 1.80, 0.0]
+Δw = [0.0, 0.0, 0.1, 0.1]
+
+均匀 MSE = 0 + 0 + 0.01 + 0.01 = 0.02
+加权 MSE = 0 + 0 + 8.0×0.01 + 0.1×0.01
+         = 0 + 0 + 0.08 + 0.001 = 0.081
+```
+
+**候选 C：scale = 0.25**（范围 [-2.0, 1.75]）
+```
+w_q = [2*0.25, -1*0.25, 7*0.25, 0*0.25] = [0.50, -0.25, 1.75, 0.0]
+Δw = [0.10, -0.05, 0.15, 0.1]
+
+均匀 MSE = 0.01 + 0.0025 + 0.0225 + 0.01 = 0.045
+加权 MSE = 0.5×0.01 + 0.2×0.0025 + 8.0×0.0225 + 0.1×0.01
+         = 0.005 + 0.0005 + 0.18 + 0.001 = 0.1865
+```
+
+**结论**：
+
+| 方法 | 最优选择 | 通道 2 误差 | 对输出的实际影响 |
+|------|---------|-----------|---------------|
+| 均匀 MSE | scale=0.0146 选 A | Δw₂=0.01 | $\Delta y_2 = 0.01 × \sqrt{8.0} = 0.028$ |
+| 加权 MSE | scale=0.00378 选 A | Δw₂=0.01 | 同上 |
+
+这里两者恰好一致。但在某些权重分布下，均匀 MSE 会选择牺牲高重要性通道来降低总 MSE，而加权 MSE 永远不会这样做。
+
+**实际影响量化**：假设均匀 MSE 选了候选 B（在某些其他权重值下可能发生）：
+
+- 通道 2 误差 = 0.1
+- 对输出的影响 = $0.1 \times \sqrt{E[x_2^2]} = 0.1 \times \sqrt{8} = 0.283$
+
+而加权 MSE 选了候选 A：
+- 通道 2 误差 = 0.01
+- 对输出的影响 = $0.01 \times \sqrt{8} = 0.028$
+
+**输出误差降低 10 倍！**这就是 IMatrix 的实际价值。
+
+---
+
+## Grid Search 中的重要性加权
 
 IMatrix MSE Observer 的 grid search 过程：
 
@@ -54,6 +221,52 @@ for each candidate (min_val, max_val):
 choose (min_val, max_val) with minimum weighted loss
 ```
 
+### Grid Search 的详细步骤
+
+```python
+def grid_search_with_imatrix(weight, importance, qmin, qmax, grid_size=100, maxshrink=0.8):
+    """
+    weight: shape [out_features, in_features]
+    importance: shape [in_features]  (E[x²])
+    """
+    # 1. 计算权重的全局范围
+    w_min = weight.min(dim=0).values  # per-channel min
+    w_max = weight.max(dim=0).values  # per-channel max
+    
+    best_loss = float('inf')
+    best_scale = None
+    best_zp = None
+    
+    # 2. Grid search：尝试不同的收缩比例
+    for shrink in torch.linspace(1 - maxshrink, 1.0, grid_size):
+        # 收缩范围（允许少量 clipping 以换取更好的精度）
+        candidate_min = w_min * shrink
+        candidate_max = w_max * shrink
+        
+        # 3. 计算 scale 和 zero_point
+        scale = (candidate_max - candidate_min) / (qmax - qmin)
+        zero_point = qmin - torch.round(candidate_min / scale)
+        
+        # 4. 伪量化
+        w_q = torch.clamp(
+            torch.round(weight / scale) + zero_point, qmin, qmax
+        )
+        w_dq = (w_q - zero_point) * scale  # 反量化
+        
+        # 5. 计算加权 MSE
+        error = weight - w_dq
+        # importance 在 in_features 维度上加权
+        weighted_mse = (importance * error ** 2).sum()
+        
+        # 6. 更新最优
+        if weighted_mse < best_loss:
+            best_loss = weighted_mse
+            best_scale = scale
+            best_zp = zero_point
+    
+    return best_scale, best_zp
+```
+
 ## 两阶段工作流
 
 IMatrix 的使用分为两个阶段：
@@ -64,10 +277,49 @@ IMatrix 的使用分为两个阶段：
 校准数据 → 前向传播 → 收集每层的 E[x²] → 存储在模块上
 ```
 
+**详细数据流**：
+
+```
+输入样本 x (shape: [batch, seq_len, hidden_dim])
+        │
+        ▼
+┌─────────────────────────────────────┐
+│  forward_pre hook (IMatrixGatherer)  │
+│                                      │
+│  x_flat = x.reshape(-1, hidden_dim)  │
+│  module._imatrix_sum += (x_flat²).sum(dim=0)  │
+│  module._imatrix_count += x_flat.shape[0]     │
+└─────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────┐
+│  Linear 层正常计算    │
+│  y = W @ x + b       │
+└─────────────────────┘
+        │
+        ▼
+  (继续前向传播...)
+```
+
 ### 阶段二：量化器使用 imatrix_mse Observer
 
 ```
 量化器读取 E[x²] → 加权 MSE 优化 → 得到更优的 scale/zp
+```
+
+**详细数据流**：
+
+```
+┌─────────────────────────────────────┐
+│  IMatrixMSEObserver.get_qparams()    │
+│                                      │
+│  1. 读取 module._imatrix_sum         │
+│  2. 读取 module._imatrix_count       │
+│  3. importance = sum / count         │
+│  4. 归一化：importance /= importance.sum()  │
+│  5. Grid search with weighted MSE    │
+│  6. 返回最优 (scale, zero_point)     │
+└─────────────────────────────────────┘
 ```
 
 ## 在 LLM Compressor 中的实现
@@ -156,6 +408,61 @@ importance = module._imatrix_sum / module._imatrix_count  # E[x²]
 
 这种设计使得两个 Modifier 可以独立配置但通过模块属性通信。
 
+### 模块属性传递的详细机制
+
+**为什么选择模块属性而非全局字典？**
+
+1. **生命周期绑定**：统计量与模块绑定，模块释放时自动回收
+2. **DDP 兼容**：`module._imatrix_sum` 在模型并行时自动分布在正确的设备上
+3. **序列化友好**：可通过 `state_dict()` 扩展来保存/加载统计
+4. **松耦合**：IMatrixGatherer 和 IMatrixMSEObserver 不需要直接引用对方
+
+**传递时序图**：
+
+```
+时间轴 ──────────────────────────────────────────────────────────────→
+
+IMatrixGatherer:
+  on_start()                     on_event(EPOCH_END)
+  │ 注册 hook                    │ DDP 同步
+  │ 初始化 _imatrix_sum=0        │ all_reduce
+  ▼                              ▼
+  ├── hook 累积 ──── hook 累积 ──── hook 累积 ──┤
+  
+  ← ──── 校准数据前向传播 ──────────────────── →
+
+Quantizer (GPTQ/RTN):
+                                                  on_start()
+                                                  │ Observer.get_qparams()
+                                                  │   └── 读取 module._imatrix_sum
+                                                  │       └── 计算加权 MSE
+                                                  ▼
+                                                  ├── 逐层量化 ──┤
+```
+
+**关键约束**：IMatrixGatherer 必须在 Quantizer 之前完成（通过 recipe 中的顺序保证）。如果顺序颠倒，Observer 会找不到 `_imatrix_sum` 属性并 fallback 到均匀 MSE。
+
+### Observer 如何检测 IMatrix 是否可用
+
+```python
+class IMatrixMSEObserver(Observer):
+    def get_qparams(self):
+        # 检查 imatrix 统计是否存在
+        if not hasattr(self.module, '_imatrix_sum') or \
+           not hasattr(self.module, '_imatrix_count'):
+            # Fallback: 不加权
+            warnings.warn(f"No imatrix stats found for {self.module}, "
+                         f"falling back to uniform MSE")
+            importance = torch.ones(self.module.in_features)
+        else:
+            importance = self.module._imatrix_sum / self.module._imatrix_count
+        
+        # 归一化（可选，避免 importance 绝对值影响 grid search 的 loss 比较）
+        importance = importance / importance.sum() * importance.numel()
+        
+        # ... grid search ...
+```
+
 ## 使用示例
 
 ### 示例 1：IMatrix + RTN W4A16
@@ -229,6 +536,33 @@ recipe = [
 ]
 ```
 
+### 示例 4：IMatrix + SpinQuant + GPTQ（最强组合）
+
+```python
+from llmcompressor.modifiers.transform.spinquant import SpinQuantModifier
+
+recipe = [
+    # 1. SpinQuant 旋转（无需校准数据）
+    SpinQuantModifier(rotations=["R1", "R2"]),
+    # 2. IMatrix 收集统计（需要校准数据）
+    IMatrixGatherer(targets="Linear", ignore=["lm_head"]),
+    # 3. GPTQ 量化（使用 imatrix 加权）
+    GPTQModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+        observer={"weights": "imatrix_mse"},
+    ),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+)
+```
+
 ## 参数说明
 
 ### IMatrixGatherer 参数
@@ -249,6 +583,33 @@ Observer 的参数通过量化配置传递：
 | `patience` | 连续无改善后停止搜索 |
 | `norm` | 误差范数类型（L2 等） |
 
+### 参数调优建议
+
+**maxshrink 的影响**：
+
+```
+maxshrink = 0.8（默认）：
+  搜索范围 [0.2×range, 1.0×range]
+  允许最多 clipping 掉 80% 的范围
+  适合大多数场景
+
+maxshrink = 0.5：
+  搜索范围 [0.5×range, 1.0×range]
+  更保守，不允许大量 clipping
+  适合离群值不严重的模型
+
+maxshrink = 0.95：
+  搜索范围 [0.05×range, 1.0×range]
+  非常激进，可能 clip 大量值
+  仅在有强重要性引导（imatrix）时使用
+```
+
+**grid（网格点数）的影响**：
+
+- `grid=100`（默认）：通常足够，每层搜索时间约 10ms
+- `grid=200`：更精细，收益递减
+- `grid=50`：加速量化过程，精度损失极小
+
 ## IMatrix 的优缺点
 
 **优点**：
@@ -256,12 +617,37 @@ Observer 的参数通过量化配置传递：
 - 计算简单（仅需一次前向传播收集统计）
 - 与任何量化器兼容
 - 理论基础清晰（加权最优化）
+- 内存开销极小（每层仅存储 1 个 in_features 维向量）
 
 **缺点**：
 - 需要额外的校准步骤（两阶段流程）
 - 增加少量内存开销（存储 E[x²]）
 - 对 FP8 等高精度格式收益有限
 - 需要有代表性的校准数据
+- 假设通道间独立（实际中通道可能有相关性）
+
+## 与其他方法的关系
+
+### IMatrix vs SmoothQuant
+
+| 维度 | IMatrix | SmoothQuant |
+|------|---------|-------------|
+| 修改对象 | 量化参数（scale/zp） | 权重和激活的值 |
+| 是否改变权重 | 否（只影响 Observer） | 是（等效变换） |
+| 目标 | 优化量化参数选择 | 平滑激活分布 |
+| 兼容性 | 仅影响 Observer | 需要修改 LayerNorm |
+| 可组合 | 可以和 SmoothQuant 组合 | 可以和 IMatrix 组合 |
+
+### IMatrix vs GPTQ 的 Hessian
+
+GPTQ 使用 $H = 2X^TX$（Hessian）来指导逐列量化和误差补偿。IMatrix 使用 $\text{diag}(H) = E[x^2]$ 来指导量化参数选择。
+
+两者关系：**IMatrix 是 GPTQ Hessian 对角线的简化版本**。
+
+- GPTQ 使用完整的 Hessian：考虑通道间的相关性，能做误差补偿
+- IMatrix 只用对角线：忽略相关性，但计算更简单，适用于 RTN
+
+组合使用时，IMatrix 为 GPTQ 提供更好的初始 scale（通过加权 MSE Observer），GPTQ 再在此基础上做误差补偿——两者互补而非冗余。
 
 ## 适用场景
 
@@ -272,3 +658,19 @@ Observer 的参数通过量化配置传递：
 | W8A8 量化 | ★★★ | 8-bit 精度足够，收益有限 |
 | FP8 量化 | ★★ | FP8 精度很高，几乎无需额外优化 |
 | 模型有明显离群通道 | ★★★★★ | 正是 IMatrix 设计解决的问题 |
+| 校准数据有限 (< 64 samples) | ★★★ | 统计可能不够稳定，但仍优于不用 |
+| 校准数据充足 (> 256 samples) | ★★★★★ | 统计稳定，重要性估计准确 |
+
+## 常见问题
+
+### Q：IMatrix 需要多少校准样本？
+
+经验上，64-256 个样本通常足够稳定地估计 $E[x^2]$。因为 IMatrix 只需要每个通道的**标量统计**（不像 GPTQ 需要完整的 $d \times d$ Hessian），所以对样本量的要求更低。
+
+### Q：IMatrix 对 group-wise 量化有效吗？
+
+有效。对于 group_size=128 的量化，每 128 个通道共享一个 scale。IMatrix 的重要性加权在 grid search 时按 group 内的通道计算加权 MSE，效果与 per-tensor 量化类似。
+
+### Q：如果校准数据分布与实际推理数据差异大怎么办？
+
+IMatrix 的鲁棒性来自于它只需要通道级别的"能量分布"近似正确，而不需要精确匹配输入分布。实际中，只要校准数据包含足够多样的 token，通道的相对重要性排序通常是稳定的。
