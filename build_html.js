@@ -4,6 +4,27 @@ const path = require('path');
 const DOCS_DIR = __dirname;
 const HTML_DIR = path.join(DOCS_DIR, 'html');
 
+// Load SVG diagrams
+const DIAGRAMS = require('./html/assets/diagrams.js');
+
+// Map: which diagrams go into which page (inserted after hero, before content)
+const PAGE_DIAGRAMS = {
+  "index.html": ["quantization_overview"],
+  "01-architecture.html": ["architecture_pipeline"],
+  "02-quantization-fundamentals.html": ["fp8_format"],
+  "03-rtn-quantization.html": ["rtn_process"],
+  "04-gptq.html": ["gptq_flow"],
+  "05-awq.html": ["awq_flow"],
+  "06-autoround.html": [],
+  "07-smoothquant.html": ["smoothquant_transform"],
+  "08-rotation-quantization.html": ["rotation_transform"],
+  "09-imatrix.html": [],
+  "10-quantization-formats.html": ["fp8_format"],
+  "11-kv-cache-quantization.html": ["kv_cache_flow"],
+  "12-advanced-practice.html": ["sequential_onloading"],
+  "13-troubleshooting.html": [],
+};
+
 const PAGES = [
   { file: "00-overview.md", html: "index.html", short: "总览", num: "00" },
   { file: "01-architecture.md", html: "01-architecture.html", short: "架构", num: "01" },
@@ -202,7 +223,7 @@ function buildPageNav(idx) {
   return `<div class="page-nav">${prev}${next}</div>`;
 }
 
-const TEMPLATE = (title, subtitle, num, nav, body, pageNav) => `<!DOCTYPE html>
+const TEMPLATE = (title, subtitle, num, nav, diagrams, body, pageNav) => `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -230,6 +251,8 @@ const TEMPLATE = (title, subtitle, num, nav, body, pageNav) => `<!DOCTYPE html>
     <h1>${title}</h1>
     <p class="subtitle">${subtitle}</p>
   </header>
+
+${diagrams}
 
   <div class="container">
     <div class="content">
@@ -260,6 +283,19 @@ const SUBTITLES = {
   "13-troubleshooting.md": "OOM、精度下降、vLLM 部署等常见问题排查",
 };
 
+// Build diagram HTML block for a page
+function buildDiagramsHtml(htmlFile) {
+  const keys = PAGE_DIAGRAMS[htmlFile] || [];
+  if (!keys.length) return '';
+  const svgs = keys.map(key => {
+    const svg = DIAGRAMS[key];
+    if (!svg) return '';
+    return `<div class="diagram-card reveal">${svg}</div>`;
+  }).filter(Boolean).join('\n');
+  if (!svgs) return '';
+  return `  <div class="container" style="margin-top:-20px;margin-bottom:32px;">\n${svgs}\n  </div>`;
+}
+
 // Main build
 fs.mkdirSync(path.join(HTML_DIR, 'assets'), { recursive: true });
 
@@ -274,10 +310,11 @@ for (let idx = 0; idx < PAGES.length; idx++) {
   const subtitle = SUBTITLES[page.file] || '';
 
   const nav = buildNav(page.html);
+  const diagrams = buildDiagramsHtml(page.html);
   const body = mdToInteractiveHtml(mdText);
   const pageNav = buildPageNav(idx);
 
-  const html = TEMPLATE(title, subtitle, page.num, nav, body, pageNav);
+  const html = TEMPLATE(title, subtitle, page.num, nav, diagrams, body, pageNav);
   fs.writeFileSync(htmlPath, html, 'utf-8');
   console.log(`  ✓ ${page.html}`);
 }

@@ -40,6 +40,57 @@
     <p class="subtitle">深入理解 Modifier、Recipe、Pipeline、Observer 系统</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 220" width="600" height="220">
+  <defs>
+    <marker id="ap-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+  </defs>
+  <rect width="600" height="220" fill="#0f172a" rx="8"/>
+  <!-- Title -->
+  <text x="300" y="25" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">LLM Compressor Pipeline Architecture</text>
+  <!-- Recipe -->
+  <rect x="20" y="50" width="100" height="55" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="70" y="73" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="11" font-weight="bold">Recipe</text>
+  <text x="70" y="90" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">YAML config</text>
+  <text x="70" y="102" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">quantization spec</text>
+  <!-- Arrow -->
+  <line x1="120" y1="77" x2="148" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#ap-arrow)"/>
+  <!-- Modifier -->
+  <rect x="153" y="50" width="100" height="55" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="203" y="73" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="11" font-weight="bold">Modifier</text>
+  <text x="203" y="90" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">GPTQModifier</text>
+  <text x="203" y="102" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">SmoothQuantModifier</text>
+  <!-- Arrow -->
+  <line x1="253" y1="77" x2="281" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#ap-arrow)"/>
+  <!-- Pipeline -->
+  <rect x="286" y="50" width="100" height="55" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="336" y="73" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="11" font-weight="bold">Pipeline</text>
+  <text x="336" y="90" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Sequential layer</text>
+  <text x="336" y="102" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">processing</text>
+  <!-- Arrow -->
+  <line x1="386" y1="77" x2="414" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#ap-arrow)"/>
+  <!-- Observer -->
+  <rect x="419" y="50" width="100" height="55" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="469" y="73" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="11" font-weight="bold">Observer</text>
+  <text x="469" y="90" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Collect stats</text>
+  <text x="469" y="102" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">min/max/scale</text>
+  <!-- Arrow down -->
+  <line x1="469" y1="105" x2="469" y2="133" stroke="#6366f1" stroke-width="2" marker-end="url(#ap-arrow)"/>
+  <!-- Output -->
+  <rect x="380" y="138" width="180" height="55" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="470" y="161" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="11" font-weight="bold">compressed-tensors</text>
+  <text x="470" y="178" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">SafeTensors + config.json</text>
+  <text x="470" y="190" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">HuggingFace compatible</text>
+  <!-- Calibration data arrow -->
+  <rect x="20" y="138" width="120" height="50" rx="8" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4"/>
+  <text x="80" y="161" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="10">Calibration Data</text>
+  <text x="80" y="177" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">512 samples</text>
+  <line x1="140" y1="163" x2="280" y2="100" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ap-arrow)"/>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="整体架构">

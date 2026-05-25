@@ -40,6 +40,57 @@
     <p class="subtitle">激活感知的通道缩放保护量化精度</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">
+  <defs>
+    <marker id="awq-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+  </defs>
+  <rect width="600" height="200" fill="#0f172a" rx="8"/>
+  <text x="300" y="22" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">AWQ (Activation-Aware Weight Quantization)</text>
+  <!-- Step 1: Activations -->
+  <rect x="15" y="50" width="95" height="55" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="62" y="70" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">Activations</text>
+  <text x="62" y="85" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Calibration</text>
+  <text x="62" y="97" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">X samples</text>
+  <!-- Arrow -->
+  <line x1="110" y1="77" x2="133" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#awq-arrow)"/>
+  <!-- Step 2: Salient Channels -->
+  <rect x="138" y="45" width="105" height="65" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="190" y="63" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="10" font-weight="bold">Find Salient</text>
+  <text x="190" y="77" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="10" font-weight="bold">Channels</text>
+  <text x="190" y="93" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">top 1% by</text>
+  <text x="190" y="104" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">magnitude</text>
+  <!-- Arrow -->
+  <line x1="243" y1="77" x2="266" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#awq-arrow)"/>
+  <!-- Step 3: Grid Search -->
+  <rect x="271" y="45" width="100" height="65" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="321" y="65" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">Grid Search</text>
+  <text x="321" y="82" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="10">alpha (0,1)</text>
+  <text x="321" y="97" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">minimize</text>
+  <text x="321" y="107" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">||Q(W*s)*X/s - WX||</text>
+  <!-- Arrow -->
+  <line x1="371" y1="77" x2="394" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#awq-arrow)"/>
+  <!-- Step 4: Apply Scaling -->
+  <rect x="399" y="50" width="90" height="55" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="444" y="70" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="10" font-weight="bold">Apply Scale</text>
+  <text x="444" y="86" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="9">W = W * s</text>
+  <text x="444" y="99" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">protect salient</text>
+  <!-- Arrow -->
+  <line x1="489" y1="77" x2="507" y2="77" stroke="#6366f1" stroke-width="2" marker-end="url(#awq-arrow)"/>
+  <!-- Step 5: Quantize -->
+  <rect x="512" y="50" width="75" height="55" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="549" y="72" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="10" font-weight="bold">Quantize</text>
+  <text x="549" y="88" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">INT4</text>
+  <text x="549" y="100" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">per-group</text>
+  <!-- Key insight -->
+  <rect x="120" y="140" width="360" height="40" rx="6" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="300" y="157" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="10">Key Insight: 1% of salient weight channels disproportionately affect quality.</text>
+  <text x="300" y="172" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Scaling protects these channels without mixed-precision overhead.</text>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="算法概述">

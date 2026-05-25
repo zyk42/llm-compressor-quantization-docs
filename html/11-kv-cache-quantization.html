@@ -40,6 +40,72 @@
     <p class="subtitle">推理时 KV 缓存 FP8 量化，序列长度翻倍</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 220" width="600" height="220">
+  <defs>
+    <marker id="kv-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+    <marker id="kv-arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#10b981"/>
+    </marker>
+  </defs>
+  <rect width="600" height="220" fill="#0f172a" rx="8"/>
+  <text x="300" y="22" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">KV Cache Quantization Flow</text>
+  <!-- Input -->
+  <rect x="20" y="45" width="70" height="40" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="55" y="69" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="10" font-weight="bold">Input</text>
+  <!-- Arrow -->
+  <line x1="90" y1="65" x2="113" y2="65" stroke="#6366f1" stroke-width="2" marker-end="url(#kv-arrow)"/>
+  <!-- Projections -->
+  <rect x="118" y="38" width="85" height="55" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="160" y="57" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="9" font-weight="bold">Projections</text>
+  <text x="160" y="72" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="9">q_proj</text>
+  <text x="160" y="85" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="9">k_proj, v_proj</text>
+  <!-- Arrows splitting -->
+  <line x1="203" y1="55" x2="233" y2="45" stroke="#6366f1" stroke-width="1.5" marker-end="url(#kv-arrow)"/>
+  <line x1="203" y1="75" x2="233" y2="85" stroke="#10b981" stroke-width="2" marker-end="url(#kv-arrow-green)"/>
+  <!-- Q path (top) -->
+  <rect x="238" y="30" width="55" height="30" rx="6" fill="#1e293b" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="265" y="49" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="9" font-weight="bold">Q (FP16)</text>
+  <!-- KV path -->
+  <rect x="238" y="73" width="100" height="35" rx="6" fill="#10b98120" stroke="#10b981" stroke-width="2"/>
+  <text x="288" y="88" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="9" font-weight="bold">K,V Quantize</text>
+  <text x="288" y="101" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">FP16 -> FP8</text>
+  <!-- Arrow to cache -->
+  <line x1="338" y1="90" x2="363" y2="90" stroke="#10b981" stroke-width="2" marker-end="url(#kv-arrow-green)"/>
+  <!-- KV Cache -->
+  <rect x="368" y="60" width="90" height="65" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="413" y="80" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">KV Cache</text>
+  <text x="413" y="95" text-anchor="middle" fill="#10b981" font-family="monospace" font-size="9">FP8 stored</text>
+  <text x="413" y="110" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">50% memory</text>
+  <text x="413" y="121" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">savings</text>
+  <!-- Arrow from cache -->
+  <line x1="458" y1="90" x2="483" y2="90" stroke="#6366f1" stroke-width="2" marker-end="url(#kv-arrow)"/>
+  <!-- Dequantize -->
+  <rect x="488" y="40" width="85" height="45" rx="6" fill="#1e293b" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="530" y="58" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="9" font-weight="bold">Dequantize</text>
+  <text x="530" y="73" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">FP8 -> FP16</text>
+  <!-- Q connects to attention -->
+  <line x1="293" y1="45" x2="500" y2="45" stroke="#6366f1" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="500" y1="45" x2="500" y2="95" stroke="#6366f1" stroke-width="1" stroke-dasharray="4"/>
+  <!-- Attention -->
+  <rect x="488" y="95" width="85" height="40" rx="6" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="530" y="112" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="9" font-weight="bold">Attention</text>
+  <text x="530" y="127" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">Q * K^T / sqrt(d)</text>
+  <!-- Dequant to attention -->
+  <line x1="530" y1="85" x2="530" y2="93" stroke="#6366f1" stroke-width="1.5" marker-end="url(#kv-arrow)"/>
+  <!-- Output -->
+  <rect x="488" y="148" width="85" height="30" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+  <text x="530" y="167" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="9" font-weight="bold">Output</text>
+  <line x1="530" y1="135" x2="530" y2="146" stroke="#6366f1" stroke-width="1.5" marker-end="url(#kv-arrow)"/>
+  <!-- Benefit box -->
+  <rect x="20" y="155" width="280" height="48" rx="6" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="160" y="173" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="9" font-weight="bold">Benefits: 2x longer sequences, 2x batch size</text>
+  <text x="160" y="190" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">KV cache often dominates memory in long-context inference</text>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="背景kv-cache-的内存问题">

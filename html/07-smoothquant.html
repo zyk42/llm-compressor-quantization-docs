@@ -40,6 +40,72 @@
     <p class="subtitle">通道级等效变换，将激活离群值平滑转移到权重</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 250" width="600" height="250">
+  <defs>
+    <marker id="sq-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+  </defs>
+  <rect width="600" height="250" fill="#0f172a" rx="8"/>
+  <text x="300" y="22" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">SmoothQuant: Activation-Weight Balancing</text>
+  <!-- BEFORE section -->
+  <text x="150" y="48" text-anchor="middle" fill="#ef4444" font-family="system-ui" font-size="11" font-weight="bold">BEFORE (Outlier Activations)</text>
+  <!-- Spiky activation bars -->
+  <rect x="40" y="110" width="12" height="20" rx="2" fill="#6366f180"/>
+  <rect x="56" y="100" width="12" height="30" rx="2" fill="#6366f180"/>
+  <rect x="72" y="55" width="12" height="75" rx="2" fill="#ef4444" stroke="#ef4444" stroke-width="1"/>
+  <rect x="88" y="108" width="12" height="22" rx="2" fill="#6366f180"/>
+  <rect x="104" y="105" width="12" height="25" rx="2" fill="#6366f180"/>
+  <rect x="120" y="60" width="12" height="70" rx="2" fill="#ef4444" stroke="#ef4444" stroke-width="1"/>
+  <rect x="136" y="112" width="12" height="18" rx="2" fill="#6366f180"/>
+  <rect x="152" y="100" width="12" height="30" rx="2" fill="#6366f180"/>
+  <rect x="168" y="107" width="12" height="23" rx="2" fill="#6366f180"/>
+  <rect x="184" y="58" width="12" height="72" rx="2" fill="#ef4444" stroke="#ef4444" stroke-width="1"/>
+  <rect x="200" y="106" width="12" height="24" rx="2" fill="#6366f180"/>
+  <rect x="216" y="110" width="12" height="20" rx="2" fill="#6366f180"/>
+  <text x="135" y="145" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Activation channels (outliers in red)</text>
+  <!-- Baseline -->
+  <line x1="35" y1="130" x2="235" y2="130" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2"/>
+  <!-- Transform arrow -->
+  <rect x="260" y="75" width="80" height="60" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="300" y="95" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">Smooth</text>
+  <text x="300" y="110" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="9">X/s | W*s</text>
+  <text x="300" y="125" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="8">s = |X|^a / |W|^(1-a)</text>
+  <line x1="240" y1="105" x2="258" y2="105" stroke="#6366f1" stroke-width="2" marker-end="url(#sq-arrow)"/>
+  <line x1="340" y1="105" x2="358" y2="105" stroke="#6366f1" stroke-width="2" marker-end="url(#sq-arrow)"/>
+  <!-- AFTER section -->
+  <text x="460" y="48" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="11" font-weight="bold">AFTER (Smoothed)</text>
+  <!-- Even activation bars -->
+  <rect x="365" y="95" width="12" height="30" rx="2" fill="#10b98180"/>
+  <rect x="381" y="92" width="12" height="33" rx="2" fill="#10b98180"/>
+  <rect x="397" y="98" width="12" height="27" rx="2" fill="#10b98180"/>
+  <rect x="413" y="90" width="12" height="35" rx="2" fill="#10b98180"/>
+  <rect x="429" y="94" width="12" height="31" rx="2" fill="#10b98180"/>
+  <rect x="445" y="96" width="12" height="29" rx="2" fill="#10b98180"/>
+  <rect x="461" y="91" width="12" height="34" rx="2" fill="#10b98180"/>
+  <rect x="477" y="97" width="12" height="28" rx="2" fill="#10b98180"/>
+  <rect x="493" y="93" width="12" height="32" rx="2" fill="#10b98180"/>
+  <rect x="509" y="95" width="12" height="30" rx="2" fill="#10b98180"/>
+  <rect x="525" y="92" width="12" height="33" rx="2" fill="#10b98180"/>
+  <rect x="541" y="96" width="12" height="29" rx="2" fill="#10b98180"/>
+  <text x="460" y="145" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Smoothed activation channels (uniform)</text>
+  <!-- Baseline -->
+  <line x1="360" y1="125" x2="560" y2="125" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2"/>
+  <!-- Bottom explanation -->
+  <rect x="60" y="170" width="200" height="55" rx="6" fill="#1e293b" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="160" y="190" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="10" font-weight="bold">Activations: X / s</text>
+  <text x="160" y="207" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Reduce outlier magnitude</text>
+  <text x="160" y="219" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Easier to quantize</text>
+  <rect x="340" y="170" width="200" height="55" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+  <text x="440" y="190" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="10" font-weight="bold">Weights: W * s</text>
+  <text x="440" y="207" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Absorb difficulty into weights</text>
+  <text x="440" y="219" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Weights are easier to quantize</text>
+  <!-- Math equivalence -->
+  <text x="300" y="245" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="10">Y = XW = (X diag(s)^(-1)) (diag(s) W) = X_smooth * W_smooth</text>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="算法概述">

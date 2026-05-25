@@ -40,6 +40,52 @@
     <p class="subtitle">最简单的量化方法——FP8 Dynamic / FP8 Block / W4A16 全面解析</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180" width="600" height="180">
+  <defs>
+    <marker id="rtn-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+  </defs>
+  <rect width="600" height="180" fill="#0f172a" rx="8"/>
+  <text x="300" y="22" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">RTN (Round-To-Nearest) Quantization</text>
+  <!-- Step 1: Weight -->
+  <rect x="15" y="45" width="85" height="50" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="57" y="67" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="11" font-weight="bold">Weight W</text>
+  <text x="57" y="83" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">FP16 values</text>
+  <!-- Arrow -->
+  <line x1="100" y1="70" x2="123" y2="70" stroke="#6366f1" stroke-width="2" marker-end="url(#rtn-arrow)"/>
+  <!-- Step 2: Compute Scale -->
+  <rect x="128" y="45" width="95" height="50" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="175" y="64" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">Compute Scale</text>
+  <text x="175" y="80" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">s = max|W|</text>
+  <text x="175" y="92" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">/ (2^(b-1)-1)</text>
+  <!-- Arrow -->
+  <line x1="223" y1="70" x2="246" y2="70" stroke="#6366f1" stroke-width="2" marker-end="url(#rtn-arrow)"/>
+  <!-- Step 3: Round -->
+  <rect x="251" y="45" width="85" height="50" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2"/>
+  <text x="293" y="65" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="10" font-weight="bold">Round</text>
+  <text x="293" y="82" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">round(W / s)</text>
+  <!-- Arrow -->
+  <line x1="336" y1="70" x2="359" y2="70" stroke="#6366f1" stroke-width="2" marker-end="url(#rtn-arrow)"/>
+  <!-- Step 4: Clamp -->
+  <rect x="364" y="45" width="95" height="50" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="411" y="65" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="10" font-weight="bold">Clamp</text>
+  <text x="411" y="82" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">clip(-2^(b-1),</text>
+  <text x="411" y="92" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">2^(b-1)-1)</text>
+  <!-- Arrow -->
+  <line x1="459" y1="70" x2="482" y2="70" stroke="#6366f1" stroke-width="2" marker-end="url(#rtn-arrow)"/>
+  <!-- Step 5: Quantized -->
+  <rect x="487" y="45" width="98" height="50" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="536" y="65" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="10" font-weight="bold">Quantized W</text>
+  <text x="536" y="82" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">INT4/INT8</text>
+  <!-- Formula summary -->
+  <rect x="100" y="120" width="400" height="40" rx="6" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="300" y="138" text-anchor="middle" fill="#f1f5f9" font-family="monospace" font-size="11">W_q = clamp(round(W / scale), -Q_n, Q_p)</text>
+  <text x="300" y="153" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Dequantize: W_hat = W_q * scale (introduces quantization error)</text>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="算法概述">

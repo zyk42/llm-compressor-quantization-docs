@@ -40,6 +40,58 @@
     <p class="subtitle">大模型量化、分布式、多模态、MoE 与组合配方</p>
   </header>
 
+  <div class="container" style="margin-top:-20px;margin-bottom:32px;">
+<div class="diagram-card reveal"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 550 220" width="550" height="220">
+  <defs>
+    <marker id="so-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6366f1"/>
+    </marker>
+    <marker id="so-arrow-acc" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f59e0b"/>
+    </marker>
+  </defs>
+  <rect width="550" height="220" fill="#0f172a" rx="8"/>
+  <text x="275" y="22" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="13" font-weight="bold">Sequential Layer Onloading (Memory-Efficient Quantization)</text>
+  <!-- GPU box -->
+  <rect x="20" y="45" width="240" height="120" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="140" y="65" text-anchor="middle" fill="#10b981" font-family="system-ui" font-size="11" font-weight="bold">GPU (VRAM)</text>
+  <!-- Active layer -->
+  <rect x="40" y="78" width="200" height="35" rx="6" fill="#6366f140" stroke="#6366f1" stroke-width="2"/>
+  <text x="140" y="100" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="11" font-weight="bold">Layer 0 (Active - Quantizing)</text>
+  <!-- Calibration running indicator -->
+  <rect x="40" y="120" width="200" height="22" rx="4" fill="#f59e0b20" stroke="#f59e0b" stroke-width="1"/>
+  <text x="140" y="135" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="9">Running calibration data through layer...</text>
+  <!-- CPU/Disk box -->
+  <rect x="300" y="45" width="230" height="120" rx="10" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4"/>
+  <text x="415" y="65" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="11" font-weight="bold">CPU / Disk (Waiting)</text>
+  <!-- Waiting layers -->
+  <rect x="315" y="78" width="200" height="22" rx="4" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="415" y="93" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Layer 1</text>
+  <rect x="315" y="104" width="200" height="22" rx="4" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="415" y="119" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Layer 2</text>
+  <rect x="315" y="130" width="200" height="22" rx="4" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="415" y="145" text-anchor="middle" fill="#94a3b8" font-family="system-ui" font-size="9">Layer 3 ... Layer N</text>
+  <!-- Transfer arrows -->
+  <path d="M 260 100 C 280 100, 280 85, 300 85" fill="none" stroke="#f59e0b" stroke-width="2" marker-end="url(#so-arrow-acc)"/>
+  <text x="283" y="78" text-anchor="middle" fill="#f59e0b" font-family="system-ui" font-size="8">offload</text>
+  <path d="M 300 108 C 280 108, 280 120, 260 120" fill="none" stroke="#6366f1" stroke-width="2" marker-end="url(#so-arrow)"/>
+  <text x="283" y="130" text-anchor="middle" fill="#6366f1" font-family="system-ui" font-size="8">load next</text>
+  <!-- Timeline -->
+  <rect x="20" y="180" width="510" height="30" rx="6" fill="#1e293b" stroke="#94a3b8" stroke-width="1"/>
+  <text x="35" y="199" fill="#94a3b8" font-family="system-ui" font-size="9">Time:</text>
+  <rect x="75" y="188" width="70" height="14" rx="3" fill="#6366f1"/>
+  <text x="110" y="199" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="8">Layer 0</text>
+  <rect x="150" y="188" width="70" height="14" rx="3" fill="#6366f180"/>
+  <text x="185" y="199" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="8">Layer 1</text>
+  <rect x="225" y="188" width="70" height="14" rx="3" fill="#6366f160"/>
+  <text x="260" y="199" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="8">Layer 2</text>
+  <text x="310" y="199" fill="#94a3b8" font-family="system-ui" font-size="10">...</text>
+  <rect x="330" y="188" width="70" height="14" rx="3" fill="#10b981"/>
+  <text x="365" y="199" text-anchor="middle" fill="#f1f5f9" font-family="system-ui" font-size="8">Layer N</text>
+  <text x="425" y="199" fill="#10b981" font-family="system-ui" font-size="8" font-weight="bold">Done!</text>
+</svg></div>
+  </div>
+
   <div class="container">
     <div class="content">
 <div class="section reveal" id="一大模型量化">
