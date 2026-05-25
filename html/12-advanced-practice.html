@@ -7,62 +7,56 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html" class="active">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html" class="active">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 12</span>
+    <h1>高级实践：大模型、多模态、MoE 与组合配方</h1>
+    <p class="subtitle">大模型量化、分布式、多模态、MoE 与组合配方</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#一大模型量化">一、大模型量化</a></li>
-          <li><a href="#二多模态模型量化">二、多模态模型量化</a></li>
-          <li><a href="#三moe-模型量化">三、MoE 模型量化</a></li>
-          <li><a href="#四组合配方combined-recipes">四、组合配方（Combined Recipes）</a></li>
-          <li><a href="#五pipeline-选择策略">五、Pipeline 选择策略</a></li>
-          <li><a href="#六实战案例总结">六、实战案例总结</a></li>
-        </ol>
-      </div>
-<h1 id="高级实践大模型多模态moe-与组合配方">高级实践：大模型、多模态、MoE 与组合配方</h1>
-<h2 id="一大模型量化">一、大模型量化</h2>
-<h3 id="sequential-onloading逐层加载">Sequential Onloading（逐层加载）</h3>
+<div class="section reveal" id="一大模型量化">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">一、大模型量化</h2>
+</div>
+<h3 id="sequential-onloading逐层加载" class="reveal">Sequential Onloading（逐层加载）</h3>
 <p>对于 70B+ 的大模型，单卡 GPU 无法同时加载整个模型。Sequential Onloading 的策略是逐层处理：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 Disk/CPU → 加载 Layer 0 到 GPU → 校准 &amp; 量化 → 保存 → 卸载
          → 加载 Layer 1 到 GPU → 校准 &amp; 量化 → 保存 → 卸载
          → ...
          → 加载 Layer N 到 GPU → 校准 &amp; 量化 → 保存 → 卸载
 </code></pre>
 <p><strong>关键配置</strong>：<code>device_map=None</code>（不让 transformers 自动分配设备）</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM
 from llmcompressor import oneshot
 from llmcompressor.modifiers.quantization import QuantizationModifier
@@ -87,7 +81,7 @@ oneshot(
 )
 </code></pre>
 <p><strong>Sequential Onloading 内部执行流程详解</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌────────────────────────────────────────────────────────────────────────┐
 │              Sequential Onloading Pipeline 完整流程                      │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -133,7 +127,7 @@ oneshot(
 └────────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p><strong>CPU↔GPU 数据移动时序图</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 时间 →  ════════════════════════════════════════════════════════►
 
 GPU:    [Layer0权重加载] [Layer0前向+量化] [卸载]  [Layer1加载] [Layer1前向+量化] [卸载] ...
@@ -149,7 +143,7 @@ CPU 峰值内存: 全模型FP16 (~140GB for 70B) + 校准数据激活 (~8GB)
 注: 量化后的层更小(FP8=原始一半, INT4=约1/4), 所以 GPU→CPU 传输量小于 CPU→GPU
 </code></pre>
 <p><strong>为什么需要 <code>device_map=None</code>？</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 如果使用 device_map="auto":
   - transformers 会自动将层分配到各 GPU/CPU
   - 模型加载后层的设备位置就固定了
@@ -162,7 +156,7 @@ CPU 峰值内存: 全模型FP16 (~140GB for 70B) + 校准数据激活 (~8GB)
   - 可以在单张 24GB GPU 上量化 70B 模型!
 </code></pre>
 <p><strong>内存预算分析（以 Llama-3.3-70B + GPTQ 为例）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 单层内存需求:
   权重 (FP16): 80层, 每层 ~1.7GB → 单层 1.7GB
   校准激活缓存: batch_size × seq_len × hidden_dim × 2 bytes
@@ -180,9 +174,9 @@ CPU 峰值内存: 全模型FP16 (~140GB for 70B) + 校准数据激活 (~8GB)
     
   GPU 总计: ~3.2 GB → 轻松在 24GB GPU 上运行
 </code></pre>
-<h3 id="disk-offloading磁盘卸载">Disk Offloading（磁盘卸载）</h3>
+<h3 id="disk-offloading磁盘卸载" class="reveal">Disk Offloading（磁盘卸载）</h3>
 <p>当模型甚至无法完全加载到 CPU 内存时，使用磁盘卸载：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from compressed_tensors.offload import dispatch_model
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -200,9 +194,9 @@ recipe = QuantizationModifier(
 
 oneshot(model=model, recipe=recipe)
 </code></pre>
-<h3 id="ddp-分布式量化">DDP 分布式量化</h3>
+<h3 id="ddp-分布式量化" class="reveal">DDP 分布式量化</h3>
 <p>使用多 GPU 并行加速校准过程：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # quantize_ddp.py
 from llmcompressor import oneshot
 from llmcompressor.modifiers.gptq import GPTQModifier
@@ -224,7 +218,7 @@ oneshot(
 )
 </code></pre>
 <p>启动：</p>
-<pre><code class="language-bash">
+<pre data-lang="bash"><code>
 torchrun --nproc_per_node=4 quantize_ddp.py
 </code></pre>
 <p><strong>DDP 如何加速</strong>：</p>
@@ -235,7 +229,7 @@ torchrun --nproc_per_node=4 quantize_ddp.py
 <li>量化参数在所有 rank 上同步</li>
 </ul>
 <p><strong>DDP 分布式量化详细机制</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌────────────────────────────────────────────────────────────────────────┐
 │                    DDP GPTQ 量化流程                                     │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -280,7 +274,7 @@ torchrun --nproc_per_node=4 quantize_ddp.py
 └────────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p><strong>Hessian 矩阵通信的开销分析</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 每个 Linear 层的 Hessian 大小:
   H 形状: [input_dim, input_dim]
   
@@ -299,7 +293,7 @@ torchrun --nproc_per_node=4 quantize_ddp.py
   结论: 通信开销相对于计算可忽略, DDP 近线性加速
 </code></pre>
 <p><strong>DDP vs 数据并行 vs 模型并行的区别</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 DDP 量化 (数据并行):
   - 每张 GPU 持有完整模型副本
   - 数据分片: 不同 GPU 处理不同校准样本
@@ -314,9 +308,9 @@ Sequential + 模型并行 (手动):
   + sequential_targets=["LlamaDecoderLayer"]
   = 每张 GPU 逐层处理, 但校准数据并行
 </code></pre>
-<h3 id="model-free-ptq">Model-Free PTQ</h3>
+<h3 id="model-free-ptq" class="reveal">Model-Free PTQ</h3>
 <p>对于没有 Hugging Face 模型定义的超大模型（如 Mistral Large 675B）：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from llmcompressor import model_free_ptq
 
 model_free_ptq(
@@ -329,9 +323,13 @@ model_free_ptq(
 )
 </code></pre>
 <p><strong>限制</strong>：目前仅支持 Data-Free 方案（FP8、MXFP4、MXFP8）。</p>
-<p>---</p>
-<h2 id="二多模态模型量化">二、多模态模型量化</h2>
-<h3 id="核心原则">核心原则</h3>
+</div>
+<div class="section reveal" id="二多模态模型量化">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">二、多模态模型量化</h2>
+</div>
+<h3 id="核心原则" class="reveal">核心原则</h3>
 <p>多模态模型（Vision-Language、Audio-Language）量化的关键：<strong>视觉/音频编码器通常不量化</strong>。</p>
 <p>原因：</p>
 <ul>
@@ -339,8 +337,8 @@ model_free_ptq(
 <li>视觉特征对量化更敏感</li>
 <li>语言模型部分占主要参数量</li>
 </ul>
-<h3 id="使用-ignore-排除非文本模块">使用 ignore 排除非文本模块</h3>
-<pre><code class="language-python">
+<h3 id="使用-ignore-排除非文本模块" class="reveal">使用 ignore 排除非文本模块</h3>
+<pre data-lang="python"><code>
 recipe = GPTQModifier(
     targets="Linear",
     scheme="W4A16",
@@ -352,8 +350,8 @@ recipe = GPTQModifier(
     ],
 )
 </code></pre>
-<h3 id="示例qwen-vl-量化">示例：Qwen-VL 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例qwen-vl-量化" class="reveal">示例：Qwen-VL 量化</h3>
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM, AutoProcessor
 from llmcompressor import oneshot
 from llmcompressor.modifiers.gptq import GPTQModifier
@@ -377,8 +375,8 @@ oneshot(
     num_calibration_samples=512,
 )
 </code></pre>
-<h3 id="示例llava-量化">示例：LLaVA 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例llava-量化" class="reveal">示例：LLaVA 量化</h3>
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="FP8_DYNAMIC",
@@ -389,9 +387,9 @@ recipe = QuantizationModifier(
     ],
 )
 </code></pre>
-<h3 id="多模态校准数据">多模态校准数据</h3>
+<h3 id="多模态校准数据" class="reveal">多模态校准数据</h3>
 <p>多模态模型的校准数据需要包含图像/音频：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # 使用 processor 处理多模态输入
 def prepare_multimodal_calibration(dataset, processor):
     samples = []
@@ -404,18 +402,22 @@ def prepare_multimodal_calibration(dataset, processor):
         samples.append(inputs)
     return samples
 </code></pre>
-<p>---</p>
-<h2 id="三moe-模型量化">三、MoE 模型量化</h2>
-<h3 id="moe-量化的挑战">MoE 量化的挑战</h3>
+</div>
+<div class="section reveal" id="三moe-模型量化">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">三、MoE 模型量化</h2>
+</div>
+<h3 id="moe-量化的挑战" class="reveal">MoE 量化的挑战</h3>
 <ol>
 <li><strong>Expert 数量多</strong>：如 Mixtral 有 8 个 Expert，DeepSeek-V3 有 256 个</li>
 <li><strong>门控层特殊处理</strong>：Router/Gate 层不应量化</li>
 <li><strong>内存压力大</strong>：AWQ 缓存激活时内存爆炸</li>
 <li><strong>不同 Expert 的激活分布差异</strong>：一刀切可能不够精确</li>
 </ol>
-<h3 id="门控层排除">门控层排除</h3>
+<h3 id="门控层排除" class="reveal">门控层排除</h3>
 <p>MoE 模型的门控（routing）层必须用 <code>ignore</code> 排除：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="FP8_DYNAMIC",
@@ -427,7 +429,7 @@ recipe = QuantizationModifier(
 )
 </code></pre>
 <p><strong>为什么门控层量化是危险的？详细分析</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌────────────────────────────────────────────────────────────────────────┐
 │                 MoE 门控层 (Router/Gate) 工作机制                         │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -476,7 +478,7 @@ recipe = QuantizationModifier(
      几乎无额外损失 (gate 参数占比太小)
 </code></pre>
 <p><strong>Expert 路由分布与量化的交互</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 观察: 不同 Expert 的激活频率差异很大
 
 DeepSeek-V3 的典型 Expert 激活模式:
@@ -495,9 +497,9 @@ DeepSeek-V3 的典型 Expert 激活模式:
   - 使用 per-expert 的量化参数
   - 或对低频 expert 保持更高精度
 </code></pre>
-<h3 id="awq-对-moe-的优化">AWQ 对 MoE 的优化</h3>
+<h3 id="awq-对-moe-的优化" class="reveal">AWQ 对 MoE 的优化</h3>
 <p>AWQ 检测到 MoE 模型时自动启用 CPU offload：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # AWQ 自动处理
 recipe = [
     AWQModifier(
@@ -511,8 +513,8 @@ recipe = [
     ),
 ]
 </code></pre>
-<h3 id="示例qwen3-moe-量化">示例：Qwen3 MoE 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例qwen3-moe-量化" class="reveal">示例：Qwen3 MoE 量化</h3>
+<pre data-lang="python"><code>
 model = AutoModelForCausalLM.from_pretrained(
     "Qwen/Qwen3-30B-A3B",
     dtype="auto",
@@ -526,8 +528,8 @@ recipe = QuantizationModifier(
 
 oneshot(model=model, recipe=recipe)
 </code></pre>
-<h3 id="示例deepseek-v3r1-量化">示例：DeepSeek-V3/R1 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例deepseek-v3r1-量化" class="reveal">示例：DeepSeek-V3/R1 量化</h3>
+<pre data-lang="python"><code>
 from llmcompressor import model_free_ptq
 
 # DeepSeek-V3 参数量极大，使用 model_free_ptq
@@ -540,10 +542,14 @@ model_free_ptq(
     device="cuda:0",
 )
 </code></pre>
-<p>---</p>
-<h2 id="四组合配方combined-recipes">四、组合配方（Combined Recipes）</h2>
-<h3 id="组合原则">组合原则</h3>
-<pre><code class="language-text">
+</div>
+<div class="section reveal" id="四组合配方combined-recipes">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">四、组合配方（Combined Recipes）</h2>
+</div>
+<h3 id="组合原则" class="reveal">组合原则</h3>
+<pre data-lang="text"><code>
 Transform Modifier（变换）→ Quantization Modifier（量化）
      ↑ 第一步                    ↑ 第二步
   修改权重分布                  执行实际量化
@@ -554,16 +560,16 @@ Transform Modifier（变换）→ Quantization Modifier（量化）
 <li>量化修改器（QuantizationModifier、GPTQModifier）在后</li>
 <li>IMatrixGatherer 必须在使用 imatrix_mse 的量化器之前</li>
 </ol>
-<h3 id="经典组合-1smoothquant-gptqw8a8-int8">经典组合 1：SmoothQuant + GPTQ（W8A8 INT8）</h3>
+<h3 id="经典组合-1smoothquant-gptqw8a8-int8" class="reveal">经典组合 1：SmoothQuant + GPTQ（W8A8 INT8）</h3>
 <p>最适合需要 INT8 加速的场景：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = [
     SmoothQuantModifier(smoothing_strength=0.8),
     GPTQModifier(targets="Linear", scheme="W8A8", ignore=["lm_head"]),
 ]
 </code></pre>
 <p><strong>SmoothQuant + GPTQ 逐步执行追踪</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌────────────────────────────────────────────────────────────────────────┐
 │         SmoothQuant + GPTQ 组合配方执行详情                               │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -621,7 +627,7 @@ recipe = [
 └────────────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p><strong>为什么 SmoothQuant 在 GPTQ 前效果好？</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 不使用 SmoothQuant:
   激活分布: 某些 channel 有极端离群值 (如 channel 127 最大值达到 100)
   权重分布: 相对均匀 (最大值 ~0.5)
@@ -642,24 +648,24 @@ recipe = [
 结论: SmoothQuant 解决了激活量化的核心难题 (离群值),
      GPTQ 解决了权重量化的精度优化, 两者互补.
 </code></pre>
-<h3 id="经典组合-2awq-rtnw4a16-快速量化">经典组合 2：AWQ + RTN（W4A16 快速量化）</h3>
+<h3 id="经典组合-2awq-rtnw4a16-快速量化" class="reveal">经典组合 2：AWQ + RTN（W4A16 快速量化）</h3>
 <p>精度优于纯 RTN，速度优于 GPTQ：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = [
     AWQModifier(duo_scaling=True, n_grid=20),
     QuantizationModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
 ]
 </code></pre>
-<h3 id="经典组合-3spinquant-gptqw4a16-最高精度">经典组合 3：SpinQuant + GPTQ（W4A16 最高精度）</h3>
+<h3 id="经典组合-3spinquant-gptqw4a16-最高精度" class="reveal">经典组合 3：SpinQuant + GPTQ（W4A16 最高精度）</h3>
 <p>旋转降低不相干性 + GPTQ 精细量化：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = [
     SpinQuantModifier(rotations=["R1", "R2", "R4"]),
     GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
 ]
 </code></pre>
-<h3 id="经典组合-4imatrix-gptqw4a16-重要性加权">经典组合 4：IMatrix + GPTQ（W4A16 重要性加权）</h3>
-<pre><code class="language-python">
+<h3 id="经典组合-4imatrix-gptqw4a16-重要性加权" class="reveal">经典组合 4：IMatrix + GPTQ（W4A16 重要性加权）</h3>
+<pre data-lang="python"><code>
 recipe = [
     IMatrixGatherer(targets="Linear", ignore=["lm_head"]),
     GPTQModifier(
@@ -670,15 +676,15 @@ recipe = [
     ),
 ]
 </code></pre>
-<h3 id="经典组合-5awq-fp8w8a8-高精度">经典组合 5：AWQ + FP8（W8A8 高精度）</h3>
-<pre><code class="language-python">
+<h3 id="经典组合-5awq-fp8w8a8-高精度" class="reveal">经典组合 5：AWQ + FP8（W8A8 高精度）</h3>
+<pre data-lang="python"><code>
 recipe = [
     AWQModifier(duo_scaling=True),
     QuantizationModifier(targets="Linear", scheme="FP8_DYNAMIC", ignore=["lm_head"]),
 ]
 </code></pre>
-<h3 id="经典组合-6非均匀量化不同层不同精度">经典组合 6：非均匀量化（不同层不同精度）</h3>
-<pre><code class="language-python">
+<h3 id="经典组合-6非均匀量化不同层不同精度" class="reveal">经典组合 6：非均匀量化（不同层不同精度）</h3>
+<pre data-lang="python"><code>
 recipe = [
     # Attention 层用 W8A8
     GPTQModifier(
@@ -692,8 +698,8 @@ recipe = [
     ),
 ]
 </code></pre>
-<h3 id="组合配方的执行顺序可视化">组合配方的执行顺序可视化</h3>
-<pre><code class="language-text">
+<h3 id="组合配方的执行顺序可视化" class="reveal">组合配方的执行顺序可视化</h3>
+<pre data-lang="text"><code>
 以 recipe = [SmoothQuantModifier, GPTQModifier] 为例:
 
 Sequential Pipeline 执行时间线:
@@ -718,14 +724,17 @@ Layer 1:
 关键: 每层的校准数据都是前面量化层的实际输出!
      这确保了误差不会在层间累积 (每层都在"真实"输入上校准)
 </code></pre>
-<p>---</p>
-<h2 id="五pipeline-选择策略">五、Pipeline 选择策略</h2>
-<table><thead><tr>
+</div>
+<div class="section reveal" id="五pipeline-选择策略">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">五、Pipeline 选择策略</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>场景</th>
 <th>推荐 Pipeline</th>
 <th>原因</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>DataFree 量化（FP8 RTN）</td>
 <td><code>datafree</code></td>
@@ -751,9 +760,9 @@ Layer 1:
 <td><code>sequential</code></td>
 <td>逐层加载到 GPU</td>
 </tr>
-</tbody></table>
-<h3 id="手动指定-pipeline">手动指定 Pipeline</h3>
-<pre><code class="language-python">
+</tbody></table></div>
+<h3 id="手动指定-pipeline" class="reveal">手动指定 Pipeline</h3>
+<pre data-lang="python"><code>
 oneshot(
     model=model,
     recipe=recipe,
@@ -762,15 +771,18 @@ oneshot(
     sequential_targets=["LlamaDecoderLayer"],
 )
 </code></pre>
-<p>---</p>
-<h2 id="六实战案例总结">六、实战案例总结</h2>
-<h3 id="场景-推荐方案">场景 → 推荐方案</h3>
-<table><thead><tr>
+</div>
+<div class="section reveal" id="六实战案例总结">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">六、实战案例总结</h2>
+</div>
+<h3 id="场景-推荐方案" class="reveal">场景 → 推荐方案</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>场景</th>
 <th>方案</th>
 <th>配方</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>快速部署 8B 模型</td>
 <td>FP8 Dynamic</td>
@@ -811,11 +823,11 @@ oneshot(
 <td>model_free_ptq</td>
 <td><code>model_free_ptq(...)</code></td>
 </tr>
-</tbody></table>
-
-<div class="page-nav"><a href="11-kv-cache-quantization.html"><span><span class="label">上一篇</span>&larr; 11 - KV Cache 量化</span></a><a href="13-troubleshooting.html"><span><span class="label">下一篇</span>13 - 问题排查 &rarr;</span></a></div>
+</tbody></table></div>
     </div>
-  </main>
+<div class="page-nav"><a href="11-kv-cache-quantization.html"><span class="nav-label">← 上一篇</span><span class="nav-title">KV Cache</span></a><a href="13-troubleshooting.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">排查</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

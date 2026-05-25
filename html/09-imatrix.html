@@ -7,112 +7,108 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html" class="active">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html" class="active">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 09</span>
+    <h1>IMatrix 重要性加权校准详解</h1>
+    <p class="subtitle">基于 E[x²] 二阶矩的通道重要性加权校准</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#算法概述">算法概述</a></li>
-          <li><a href="#理论基础">理论基础</a></li>
-          <li><a href="#完整数值示例">完整数值示例</a></li>
-          <li><a href="#grid-search-中的重要性加权">Grid Search 中的重要性加权</a></li>
-          <li><a href="#两阶段工作流">两阶段工作流</a></li>
-          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
-          <li><a href="#使用示例">使用示例</a></li>
-          <li><a href="#参数说明">参数说明</a></li>
-          <li><a href="#imatrix-的优缺点">IMatrix 的优缺点</a></li>
-          <li><a href="#与其他方法的关系">与其他方法的关系</a></li>
-          <li><a href="#适用场景">适用场景</a></li>
-          <li><a href="#常见问题">常见问题</a></li>
-        </ol>
-      </div>
-<h1 id="imatrix-重要性加权校准详解">IMatrix 重要性加权校准详解</h1>
-<h2 id="算法概述">算法概述</h2>
+<div class="section reveal" id="算法概述">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">算法概述</h2>
+</div>
 <p>IMatrix（Importance Matrix）是一种校准增强技术，通过收集输入激活的<strong>二阶矩统计</strong>来为每个权重通道分配重要性权重。传统的 MSE Observer 对所有通道等权处理，而 IMatrix 让频繁被大激活值"激活"的通道获得更大的量化保护。</p>
 <p><strong>核心思想</strong>：不是所有通道同等重要——激活值经常很大的通道对输出影响更大，量化时应该更精确地保护它们。</p>
-<h2 id="理论基础">理论基础</h2>
-<h3 id="通道重要性定义">通道重要性定义</h3>
+<div class="section reveal" id="理论基础">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">理论基础</h2>
+</div>
+<h3 id="通道重要性定义" class="reveal">通道重要性定义</h3>
 <p>IMatrix 定义第 \(j\) 个输入通道的重要性为激活的二阶矩：</p>
-<p><div class="formula-block">\[\text{importance}_j = E[x_j^2] = \frac{1}{N} \sum_{n=1}^{N} x_{n,j}^2\]</div></p>
+<p><div class="formula">\[\text{importance}_j = E[x_j^2] = \frac{1}{N} \sum_{n=1}^{N} x_{n,j}^2\]</div></p>
 <p>其中 \(x_{n,j}\) 是第 \(n\) 个样本在第 \(j\) 个通道的激活值。</p>
-<h3 id="为什么用二阶矩">为什么用二阶矩？</h3>
+<h3 id="为什么用二阶矩" class="reveal">为什么用二阶矩？</h3>
 <p>对于线性层 \(y = Wx\)，权重 \(w_j\) 的量化误差 \(\Delta w_j\) 对输出的影响为：</p>
-<p><div class="formula-block">\[\Delta y = \sum_j \Delta w_j \cdot x_j\]</div></p>
+<p><div class="formula">\[\Delta y = \sum_j \Delta w_j \cdot x_j\]</div></p>
 <p>输出误差的期望：</p>
-<p><div class="formula-block">\[E[\Delta y^2] = \sum_j (\Delta w_j)^2 \cdot E[x_j^2] = \sum_j (\Delta w_j)^2 \cdot \text{importance}_j\]</div></p>
+<p><div class="formula">\[E[\Delta y^2] = \sum_j (\Delta w_j)^2 \cdot E[x_j^2] = \sum_j (\Delta w_j)^2 \cdot \text{importance}_j\]</div></p>
 <p>因此，\(E[x_j^2]\) 大的通道，其量化误差会被更大地放大。</p>
-<h3 id="详细推导为什么是-ex_j2-而不是-ex_j-或-textvarx_j">详细推导：为什么是 \(E[x_j^2]\) 而不是 \(E[|x_j|]\) 或 \(\text{Var}(x_j)\)</h3>
+<h3 id="详细推导为什么是-ex_j2-而不是-ex_j-或-textvarx_j" class="reveal">详细推导：为什么是 \(E[x_j^2]\) 而不是 \(E[|x_j|]\) 或 \(\text{Var}(x_j)\)</h3>
 <p><strong>推导输出 MSE</strong>：</p>
-<p><div class="formula-block">\[E[||\Delta y||^2] = E\left[\left(\sum_j \Delta w_j \cdot x_j\right)^2\right]\]</div></p>
+<p><div class="formula">\[E[||\Delta y||^2] = E\left[\left(\sum_j \Delta w_j \cdot x_j\right)^2\right]\]</div></p>
 <p>展开平方：</p>
-<p><div class="formula-block">\[= E\left[\sum_j \sum_k \Delta w_j \cdot \Delta w_k \cdot x_j \cdot x_k\right]\]</div></p>
+<p><div class="formula">\[= E\left[\sum_j \sum_k \Delta w_j \cdot \Delta w_k \cdot x_j \cdot x_k\right]\]</div></p>
 <p>如果假设不同通道的激活是<strong>近似不相关</strong>的（\(E[x_j x_k] \approx 0\) 当 \(j \neq k\)），则交叉项消失：</p>
-<p><div class="formula-block">\[\approx \sum_j (\Delta w_j)^2 \cdot E[x_j^2]\]</div></p>
+<p><div class="formula">\[\approx \sum_j (\Delta w_j)^2 \cdot E[x_j^2]\]</div></p>
 <p>这就是为什么选择 \(E[x_j^2]\)（二阶矩）作为重要性度量：</p>
 <ul>
 <li>\(E[|x_j|]\)（一阶绝对矩）：不能正确反映平方误差的放大效应</li>
 <li>\(\text{Var}(x_j)\)：不包含均值的贡献（如果激活均值非零，均值部分也会放大误差）</li>
 <li>\(E[x_j^2] = \text{Var}(x_j) + (E[x_j])^2\)：完整捕获了激活的"能量"</li>
 </ul>
-<h3 id="加权-mse-目标">加权 MSE 目标</h3>
+<h3 id="加权-mse-目标" class="reveal">加权 MSE 目标</h3>
 <p>传统 MSE Observer 的目标：</p>
-<p><div class="formula-block">\[\min_{s, z} \sum_j (w_j - \hat{w}_j)^2\]</div></p>
+<p><div class="formula">\[\min_{s, z} \sum_j (w_j - \hat{w}_j)^2\]</div></p>
 <p>IMatrix 加权 MSE Observer 的目标：</p>
-<p><div class="formula-block">\[\min_{s, z} \sum_j \text{importance}_j \cdot (w_j - \hat{w}_j)^2\]</div></p>
+<p><div class="formula">\[\min_{s, z} \sum_j \text{importance}_j \cdot (w_j - \hat{w}_j)^2\]</div></p>
 <p>这使得高重要性通道获得更小的量化误差。</p>
-<h3 id="直觉解释加权-mse-的几何意义">直觉解释：加权 MSE 的几何意义</h3>
+<h3 id="直觉解释加权-mse-的几何意义" class="reveal">直觉解释：加权 MSE 的几何意义</h3>
 <p>传统 MSE 将所有通道的误差视为等价——在参数空间中定义了一个"圆形"等误差面。加权 MSE 将等误差面变成"椭圆形"：高重要性方向上容许的偏差更小，低重要性方向上容许的偏差更大。</p>
 <p>量化是一个离散化过程，量化后的值必须落在量化网格点上。加权 MSE 使得量化参数（scale, zero_point）的选择倾向于让高重要性通道恰好落在网格点附近，代价是低重要性通道可能偏离网格点更远。</p>
-<p>---</p>
-<h2 id="完整数值示例">完整数值示例</h2>
-<h3 id="问题设置">问题设置</h3>
+</div>
+<div class="section reveal" id="完整数值示例">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">完整数值示例</h2>
+</div>
+<h3 id="问题设置" class="reveal">问题设置</h3>
 <p>考虑一个简单的线性层，输入维度 4，输出维度 1。</p>
 <p><strong>权重向量</strong>：\(w = [0.8, -0.3, 1.5, 0.1]\)</p>
 <p><strong>通过校准收集的激活统计</strong>（假设 100 个样本）：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 通道 0: E[x_0^2] = 0.5    (正常通道)
 通道 1: E[x_1^2] = 0.2    (不太重要)
 通道 2: E[x_2^2] = 8.0    (高重要性通道！激活经常很大)
 通道 3: E[x_3^2] = 0.1    (最不重要)
 </code></pre>
 <p><strong>重要性向量</strong>：\(\text{imp} = [0.5, 0.2, 8.0, 0.1]\)</p>
-<h3 id="对比均匀-mse-vs-重要性加权-mse">对比：均匀 MSE vs 重要性加权 MSE</h3>
+<h3 id="对比均匀-mse-vs-重要性加权-mse" class="reveal">对比：均匀 MSE vs 重要性加权 MSE</h3>
 <p>假设使用 INT4 对称量化（值域 [-8, 7]）。</p>
 <p><strong>Grid Search 过程</strong>：</p>
 <p>尝试不同的 scale 值，对于每个 scale 计算量化后的误差。</p>
 <p><strong>候选 1：scale = 0.25</strong>（范围 [-2.0, 1.75]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w = [0.8, -0.3, 1.5, 0.1]
 w_q = [round(0.8/0.25)*0.25, round(-0.3/0.25)*0.25, round(1.5/0.25)*0.25, round(0.1/0.25)*0.25]
     = [3*0.25, -1*0.25, 6*0.25, 0*0.25]
@@ -125,7 +121,7 @@ w_q = [round(0.8/0.25)*0.25, round(-0.3/0.25)*0.25, round(1.5/0.25)*0.25, round(
          = 0.00125 + 0.0005 + 0 + 0.001 = 0.00275
 </code></pre>
 <p><strong>候选 2：scale = 0.20</strong>（范围 [-1.6, 1.4]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w = [0.8, -0.3, 1.5, 0.1]
 w_q = [round(0.8/0.2)*0.2, round(-0.3/0.2)*0.2, round(1.5/0.2)*0.2, round(0.1/0.2)*0.2]
     = [4*0.2, -2*0.2, 7*0.2, 1*0.2]
@@ -138,7 +134,7 @@ w_q = [round(0.8/0.2)*0.2, round(-0.3/0.2)*0.2, round(1.5/0.2)*0.2, round(0.1/0.
          = 0 + 0.002 + 0.08 + 0.001 = 0.083
 </code></pre>
 <p><strong>候选 3：scale = 0.22</strong>（范围 [-1.76, 1.54]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w_q = [round(0.8/0.22)*0.22, round(-0.3/0.22)*0.22, round(1.5/0.22)*0.22, round(0.1/0.22)*0.22]
     = [4*0.22, -1*0.22, 7*0.22, 0*0.22]
     = [0.88, -0.22, 1.54, 0.0]
@@ -149,14 +145,13 @@ w_q = [round(0.8/0.22)*0.22, round(-0.3/0.22)*0.22, round(1.5/0.22)*0.22, round(
 加权 MSE = 0.5×0.08² + 0.2×0.08² + 8.0×0.04² + 0.1×0.1²
          = 0.0032 + 0.00128 + 0.0128 + 0.001 = 0.01828
 </code></pre>
-<h3 id="对比结果">对比结果</h3>
-<table><thead><tr>
+<h3 id="对比结果" class="reveal">对比结果</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>scale</th>
 <th>均匀 MSE</th>
 <th>加权 MSE</th>
 <th>通道 2 误差</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>0.25</td>
 <td><strong>0.015</strong></td>
@@ -175,17 +170,17 @@ w_q = [round(0.8/0.22)*0.22, round(-0.3/0.22)*0.22, round(1.5/0.22)*0.22, round(
 <td>0.018</td>
 <td>0.04</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p><strong>关键发现</strong>：</p>
 <ul>
 <li><strong>均匀 MSE</strong> 选择 scale=0.25（总误差最小 0.015）</li>
 <li><strong>加权 MSE</strong> 也选择 scale=0.25（加权误差最小 0.00275）</li>
 </ul>
 <p>在这个例子中两者碰巧选择了同一个 scale。但关键区别出现在更紧张的场景中——当最优 scale 需要在"保护通道 2"和"保护其他通道"之间做权衡时，加权 MSE 会更倾向于保护通道 2。</p>
-<h3 id="更极端的例子权衡场景">更极端的例子：权衡场景</h3>
+<h3 id="更极端的例子权衡场景" class="reveal">更极端的例子：权衡场景</h3>
 <p>假设权重为 \(w = [0.6, -0.3, 1.9, 0.1]\)（通道 2 的值更大），重要性同前。</p>
 <p><strong>候选 A：scale = 0.27</strong>（范围 [-2.16, 1.89]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w_q = [2*0.27, -1*0.27, 7*0.27, 0*0.27] = [0.54, -0.27, 1.89, 0.0]
 Δw = [0.06, -0.03, 0.01, 0.1]
 
@@ -194,7 +189,7 @@ w_q = [2*0.27, -1*0.27, 7*0.27, 0*0.27] = [0.54, -0.27, 1.89, 0.0]
          = 0.0018 + 0.00018 + 0.0008 + 0.001 = 0.00378
 </code></pre>
 <p><strong>候选 B：scale = 0.30</strong>（范围 [-2.4, 2.1]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w_q = [2*0.30, -1*0.30, 6*0.30, 0*0.30] = [0.60, -0.30, 1.80, 0.0]
 Δw = [0.0, 0.0, 0.1, 0.1]
 
@@ -203,7 +198,7 @@ w_q = [2*0.30, -1*0.30, 6*0.30, 0*0.30] = [0.60, -0.30, 1.80, 0.0]
          = 0 + 0 + 0.08 + 0.001 = 0.081
 </code></pre>
 <p><strong>候选 C：scale = 0.25</strong>（范围 [-2.0, 1.75]）</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 w_q = [2*0.25, -1*0.25, 7*0.25, 0*0.25] = [0.50, -0.25, 1.75, 0.0]
 Δw = [0.10, -0.05, 0.15, 0.1]
 
@@ -212,13 +207,12 @@ w_q = [2*0.25, -1*0.25, 7*0.25, 0*0.25] = [0.50, -0.25, 1.75, 0.0]
          = 0.005 + 0.0005 + 0.18 + 0.001 = 0.1865
 </code></pre>
 <p><strong>结论</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>方法</th>
 <th>最优选择</th>
 <th>通道 2 误差</th>
 <th>对输出的实际影响</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>均匀 MSE</td>
 <td>scale=0.0146 选 A</td>
@@ -231,7 +225,7 @@ w_q = [2*0.25, -1*0.25, 7*0.25, 0*0.25] = [0.50, -0.25, 1.75, 0.0]
 <td>Δw₂=0.01</td>
 <td>同上</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>这里两者恰好一致。但在某些权重分布下，均匀 MSE 会选择牺牲高重要性通道来降低总 MSE，而加权 MSE 永远不会这样做。</p>
 <p><strong>实际影响量化</strong>：假设均匀 MSE 选了候选 B（在某些其他权重值下可能发生）：</p>
 <ul>
@@ -244,10 +238,14 @@ w_q = [2*0.25, -1*0.25, 7*0.25, 0*0.25] = [0.50, -0.25, 1.75, 0.0]
 <li>对输出的影响 = \(0.01 \times \sqrt{8} = 0.028\)</li>
 </ul>
 <p><strong>输出误差降低 10 倍！</strong>这就是 IMatrix 的实际价值。</p>
-<p>---</p>
-<h2 id="grid-search-中的重要性加权">Grid Search 中的重要性加权</h2>
+</div>
+<div class="section reveal" id="grid-search-中的重要性加权">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">Grid Search 中的重要性加权</h2>
+</div>
 <p>IMatrix MSE Observer 的 grid search 过程：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 for each candidate (min_val, max_val):
     scale = (max_val - min_val) / (qmax - qmin)
     w_q = quantize(w, scale, zero_point)
@@ -256,8 +254,8 @@ for each candidate (min_val, max_val):
     
 choose (min_val, max_val) with minimum weighted loss
 </code></pre>
-<h3 id="grid-search-的详细步骤">Grid Search 的详细步骤</h3>
-<pre><code class="language-python">
+<h3 id="grid-search-的详细步骤" class="reveal">Grid Search 的详细步骤</h3>
+<pre data-lang="python"><code>
 def grid_search_with_imatrix(weight, importance, qmin, qmax, grid_size=100, maxshrink=0.8):
     """
     weight: shape [out_features, in_features]
@@ -300,14 +298,18 @@ def grid_search_with_imatrix(weight, importance, qmin, qmax, grid_size=100, maxs
     
     return best_scale, best_zp
 </code></pre>
-<h2 id="两阶段工作流">两阶段工作流</h2>
+<div class="section reveal" id="两阶段工作流">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">两阶段工作流</h2>
+</div>
 <p>IMatrix 的使用分为两个阶段：</p>
-<h3 id="阶段一imatrixgatherer-收集统计">阶段一：IMatrixGatherer 收集统计</h3>
-<pre><code class="language-text">
+<h3 id="阶段一imatrixgatherer-收集统计" class="reveal">阶段一：IMatrixGatherer 收集统计</h3>
+<pre data-lang="text"><code>
 校准数据 → 前向传播 → 收集每层的 E[x²] → 存储在模块上
 </code></pre>
 <p><strong>详细数据流</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 输入样本 x (shape: [batch, seq_len, hidden_dim])
         │
         ▼
@@ -328,12 +330,12 @@ def grid_search_with_imatrix(weight, importance, qmin, qmax, grid_size=100, maxs
         ▼
   (继续前向传播...)
 </code></pre>
-<h3 id="阶段二量化器使用-imatrix_mse-observer">阶段二：量化器使用 imatrix_mse Observer</h3>
-<pre><code class="language-text">
+<h3 id="阶段二量化器使用-imatrix_mse-observer" class="reveal">阶段二：量化器使用 imatrix_mse Observer</h3>
+<pre data-lang="text"><code>
 量化器读取 E[x²] → 加权 MSE 优化 → 得到更优的 scale/zp
 </code></pre>
 <p><strong>详细数据流</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌─────────────────────────────────────┐
 │  IMatrixMSEObserver.get_qparams()    │
 │                                      │
@@ -345,9 +347,13 @@ def grid_search_with_imatrix(weight, importance, qmin, qmax, grid_size=100, maxs
 │  6. 返回最优 (scale, zero_point)     │
 └─────────────────────────────────────┘
 </code></pre>
-<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
-<h3 id="imatrixgatherer">IMatrixGatherer</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="在-llm-compressor-中的实现">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">在 LLM Compressor 中的实现</h2>
+</div>
+<h3 id="imatrixgatherer" class="reveal">IMatrixGatherer</h3>
+<pre data-lang="python"><code>
 # src/llmcompressor/modifiers/transform/imatrix/base.py
 
 class IMatrixGatherer(Modifier):
@@ -380,8 +386,8 @@ class IMatrixGatherer(Modifier):
                 dist.all_reduce(module._imatrix_sum, op=dist.ReduceOp.SUM)
                 dist.all_reduce(module._imatrix_count, op=dist.ReduceOp.SUM)
 </code></pre>
-<h3 id="imatrix-mse-observer">IMatrix MSE Observer</h3>
-<pre><code class="language-python">
+<h3 id="imatrix-mse-observer" class="reveal">IMatrix MSE Observer</h3>
+<pre data-lang="python"><code>
 # src/llmcompressor/observers/imatrix.py
 
 class IMatrixMSEObserver(Observer):
@@ -411,9 +417,9 @@ class IMatrixMSEObserver(Observer):
         
         return {"scale": best_scale, "zero_point": best_zp, ...}
 </code></pre>
-<h3 id="统计量传递机制">统计量传递机制</h3>
+<h3 id="统计量传递机制" class="reveal">统计量传递机制</h3>
 <p>IMatrixGatherer 将统计量直接存储在模块的属性上：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # IMatrixGatherer 存储
 module._imatrix_sum = accumulated_sum      # Σ x²
 module._imatrix_count = sample_count       # N
@@ -422,7 +428,7 @@ module._imatrix_count = sample_count       # N
 importance = module._imatrix_sum / module._imatrix_count  # E[x²]
 </code></pre>
 <p>这种设计使得两个 Modifier 可以独立配置但通过模块属性通信。</p>
-<h3 id="模块属性传递的详细机制">模块属性传递的详细机制</h3>
+<h3 id="模块属性传递的详细机制" class="reveal">模块属性传递的详细机制</h3>
 <p><strong>为什么选择模块属性而非全局字典？</strong></p>
 <ol>
 <li><strong>生命周期绑定</strong>：统计量与模块绑定，模块释放时自动回收</li>
@@ -431,7 +437,7 @@ importance = module._imatrix_sum / module._imatrix_count  # E[x²]
 <li><strong>松耦合</strong>：IMatrixGatherer 和 IMatrixMSEObserver 不需要直接引用对方</li>
 </ol>
 <p><strong>传递时序图</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 时间轴 ──────────────────────────────────────────────────────────────→
 
 IMatrixGatherer:
@@ -452,8 +458,8 @@ Quantizer (GPTQ/RTN):
                                                   ├── 逐层量化 ──┤
 </code></pre>
 <p><strong>关键约束</strong>：IMatrixGatherer 必须在 Quantizer 之前完成（通过 recipe 中的顺序保证）。如果顺序颠倒，Observer 会找不到 <code>_imatrix_sum</code> 属性并 fallback 到均匀 MSE。</p>
-<h3 id="observer-如何检测-imatrix-是否可用">Observer 如何检测 IMatrix 是否可用</h3>
-<pre><code class="language-python">
+<h3 id="observer-如何检测-imatrix-是否可用" class="reveal">Observer 如何检测 IMatrix 是否可用</h3>
+<pre data-lang="python"><code>
 class IMatrixMSEObserver(Observer):
     def get_qparams(self):
         # 检查 imatrix 统计是否存在
@@ -471,9 +477,13 @@ class IMatrixMSEObserver(Observer):
         
         # ... grid search ...
 </code></pre>
-<h2 id="使用示例">使用示例</h2>
-<h3 id="示例-1imatrix-rtn-w4a16">示例 1：IMatrix + RTN W4A16</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="使用示例">
+<div class="section-header">
+<div class="section-number">7</div>
+<h2 class="section-title">使用示例</h2>
+</div>
+<h3 id="示例-1imatrix-rtn-w4a16" class="reveal">示例 1：IMatrix + RTN W4A16</h3>
+<pre data-lang="python"><code>
 from llmcompressor import oneshot
 from llmcompressor.modifiers.transform.imatrix import IMatrixGatherer
 from llmcompressor.modifiers.quantization import QuantizationModifier
@@ -504,8 +514,8 @@ oneshot(
     max_seq_length=2048,
 )
 </code></pre>
-<h3 id="示例-2imatrix-gptq">示例 2：IMatrix + GPTQ</h3>
-<pre><code class="language-python">
+<h3 id="示例-2imatrix-gptq" class="reveal">示例 2：IMatrix + GPTQ</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.gptq import GPTQModifier
 
 recipe = [
@@ -525,8 +535,8 @@ oneshot(
     num_calibration_samples=512,
 )
 </code></pre>
-<h3 id="示例-3imatrix-fp8">示例 3：IMatrix + FP8</h3>
-<pre><code class="language-python">
+<h3 id="示例-3imatrix-fp8" class="reveal">示例 3：IMatrix + FP8</h3>
+<pre data-lang="python"><code>
 recipe = [
     IMatrixGatherer(targets="Linear", ignore=["lm_head"]),
     QuantizationModifier(
@@ -537,8 +547,8 @@ recipe = [
     ),
 ]
 </code></pre>
-<h3 id="示例-4imatrix-spinquant-gptq最强组合">示例 4：IMatrix + SpinQuant + GPTQ（最强组合）</h3>
-<pre><code class="language-python">
+<h3 id="示例-4imatrix-spinquant-gptq最强组合" class="reveal">示例 4：IMatrix + SpinQuant + GPTQ（最强组合）</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.transform.spinquant import SpinQuantModifier
 
 recipe = [
@@ -562,14 +572,17 @@ oneshot(
     num_calibration_samples=512,
 )
 </code></pre>
-<h2 id="参数说明">参数说明</h2>
-<h3 id="imatrixgatherer-参数">IMatrixGatherer 参数</h3>
-<table><thead><tr>
+<div class="section reveal" id="参数说明">
+<div class="section-header">
+<div class="section-number">8</div>
+<h2 class="section-title">参数说明</h2>
+</div>
+<h3 id="imatrixgatherer-参数" class="reveal">IMatrixGatherer 参数</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>参数</th>
 <th>默认值</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>targets</code></td>
 <td>"Linear"</td>
@@ -580,14 +593,13 @@ oneshot(
 <td>[]</td>
 <td>跳过的层</td>
 </tr>
-</tbody></table>
-<h3 id="imatrix-mse-observer-参数">IMatrix MSE Observer 参数</h3>
+</tbody></table></div>
+<h3 id="imatrix-mse-observer-参数" class="reveal">IMatrix MSE Observer 参数</h3>
 <p>Observer 的参数通过量化配置传递：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>参数</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>maxshrink</code></td>
 <td>Grid search 的最大收缩比例</td>
@@ -604,10 +616,10 @@ oneshot(
 <td><code>norm</code></td>
 <td>误差范数类型（L2 等）</td>
 </tr>
-</tbody></table>
-<h3 id="参数调优建议">参数调优建议</h3>
+</tbody></table></div>
+<h3 id="参数调优建议" class="reveal">参数调优建议</h3>
 <p><strong>maxshrink 的影响</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 maxshrink = 0.8（默认）：
   搜索范围 [0.2×range, 1.0×range]
   允许最多 clipping 掉 80% 的范围
@@ -629,7 +641,11 @@ maxshrink = 0.95：
 <li><code>grid=200</code>：更精细，收益递减</li>
 <li><code>grid=50</code>：加速量化过程，精度损失极小</li>
 </ul>
-<h2 id="imatrix-的优缺点">IMatrix 的优缺点</h2>
+<div class="section reveal" id="imatrix-的优缺点">
+<div class="section-header">
+<div class="section-number">9</div>
+<h2 class="section-title">IMatrix 的优缺点</h2>
+</div>
 <p><strong>优点</strong>：</p>
 <ul>
 <li>显著提升低比特量化精度（尤其 4-bit）</li>
@@ -646,14 +662,17 @@ maxshrink = 0.95：
 <li>需要有代表性的校准数据</li>
 <li>假设通道间独立（实际中通道可能有相关性）</li>
 </ul>
-<h2 id="与其他方法的关系">与其他方法的关系</h2>
-<h3 id="imatrix-vs-smoothquant">IMatrix vs SmoothQuant</h3>
-<table><thead><tr>
+<div class="section reveal" id="与其他方法的关系">
+<div class="section-header">
+<div class="section-number">10</div>
+<h2 class="section-title">与其他方法的关系</h2>
+</div>
+<h3 id="imatrix-vs-smoothquant" class="reveal">IMatrix vs SmoothQuant</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>维度</th>
 <th>IMatrix</th>
 <th>SmoothQuant</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>修改对象</td>
 <td>量化参数（scale/zp）</td>
@@ -679,8 +698,8 @@ maxshrink = 0.95：
 <td>可以和 SmoothQuant 组合</td>
 <td>可以和 IMatrix 组合</td>
 </tr>
-</tbody></table>
-<h3 id="imatrix-vs-gptq-的-hessian">IMatrix vs GPTQ 的 Hessian</h3>
+</tbody></table></div>
+<h3 id="imatrix-vs-gptq-的-hessian" class="reveal">IMatrix vs GPTQ 的 Hessian</h3>
 <p>GPTQ 使用 \(H = 2X^TX\)（Hessian）来指导逐列量化和误差补偿。IMatrix 使用 \(\text{diag}(H) = E[x^2]\) 来指导量化参数选择。</p>
 <p>两者关系：<strong>IMatrix 是 GPTQ Hessian 对角线的简化版本</strong>。</p>
 <ul>
@@ -688,13 +707,16 @@ maxshrink = 0.95：
 <li>IMatrix 只用对角线：忽略相关性，但计算更简单，适用于 RTN</li>
 </ul>
 <p>组合使用时，IMatrix 为 GPTQ 提供更好的初始 scale（通过加权 MSE Observer），GPTQ 再在此基础上做误差补偿——两者互补而非冗余。</p>
-<h2 id="适用场景">适用场景</h2>
-<table><thead><tr>
+<div class="section reveal" id="适用场景">
+<div class="section-header">
+<div class="section-number">11</div>
+<h2 class="section-title">适用场景</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>场景</th>
 <th>推荐度</th>
 <th>原因</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>W4A16 INT4 量化</td>
 <td>★★★★★</td>
@@ -730,18 +752,22 @@ maxshrink = 0.95：
 <td>★★★★★</td>
 <td>统计稳定，重要性估计准确</td>
 </tr>
-</tbody></table>
-<h2 id="常见问题">常见问题</h2>
-<h3 id="qimatrix-需要多少校准样本">Q：IMatrix 需要多少校准样本？</h3>
+</tbody></table></div>
+<div class="section reveal" id="常见问题">
+<div class="section-header">
+<div class="section-number">12</div>
+<h2 class="section-title">常见问题</h2>
+</div>
+<h3 id="qimatrix-需要多少校准样本" class="reveal">Q：IMatrix 需要多少校准样本？</h3>
 <p>经验上，64-256 个样本通常足够稳定地估计 \(E[x^2]\)。因为 IMatrix 只需要每个通道的<strong>标量统计</strong>（不像 GPTQ 需要完整的 \(d \times d\) Hessian），所以对样本量的要求更低。</p>
-<h3 id="qimatrix-对-group-wise-量化有效吗">Q：IMatrix 对 group-wise 量化有效吗？</h3>
+<h3 id="qimatrix-对-group-wise-量化有效吗" class="reveal">Q：IMatrix 对 group-wise 量化有效吗？</h3>
 <p>有效。对于 group_size=128 的量化，每 128 个通道共享一个 scale。IMatrix 的重要性加权在 grid search 时按 group 内的通道计算加权 MSE，效果与 per-tensor 量化类似。</p>
-<h3 id="q如果校准数据分布与实际推理数据差异大怎么办">Q：如果校准数据分布与实际推理数据差异大怎么办？</h3>
+<h3 id="q如果校准数据分布与实际推理数据差异大怎么办" class="reveal">Q：如果校准数据分布与实际推理数据差异大怎么办？</h3>
 <p>IMatrix 的鲁棒性来自于它只需要通道级别的"能量分布"近似正确，而不需要精确匹配输入分布。实际中，只要校准数据包含足够多样的 token，通道的相对重要性排序通常是稳定的。</p>
-
-<div class="page-nav"><a href="08-rotation-quantization.html"><span><span class="label">上一篇</span>&larr; 08 - 旋转量化 (SpinQuant/QuIP)</span></a><a href="10-quantization-formats.html"><span><span class="label">下一篇</span>10 - 量化格式详解 &rarr;</span></a></div>
     </div>
-  </main>
+<div class="page-nav"><a href="08-rotation-quantization.html"><span class="nav-label">← 上一篇</span><span class="nav-title">旋转量化</span></a><a href="10-quantization-formats.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">格式</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

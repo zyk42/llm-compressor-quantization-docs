@@ -7,60 +7,54 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html" class="active">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html" class="active">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 06</span>
+    <h1>AutoRound 量化详解</h1>
+    <p class="subtitle">SignSGD 优化舍入决策，逐层最小化输出误差</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#算法概述">算法概述</a></li>
-          <li><a href="#理论基础">理论基础</a></li>
-          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
-          <li><a href="#使用示例">使用示例</a></li>
-          <li><a href="#参数说明">参数说明</a></li>
-          <li><a href="#参数调优指南">参数调优指南</a></li>
-          <li><a href="#autoround-内存开销分析">AutoRound 内存开销分析</a></li>
-          <li><a href="#autoround-的优缺点">AutoRound 的优缺点</a></li>
-          <li><a href="#与-gptq-的对比">与 GPTQ 的对比</a></li>
-          <li><a href="#常见问题">常见问题</a></li>
-        </ol>
-      </div>
-<h1 id="autoround-量化详解">AutoRound 量化详解</h1>
-<h2 id="算法概述">算法概述</h2>
+<div class="section reveal" id="算法概述">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">算法概述</h2>
+</div>
 <p>AutoRound 是 Intel 提出的量化算法，通过 <strong>SignSGD 优化器</strong>迭代优化舍入决策和权重裁剪范围，以最小化逐层输出误差。相比 GPTQ 的一次性最优补偿，AutoRound 通过多轮梯度优化获得更精细的舍入策略。</p>
 <p><strong>核心思想</strong>：量化中的舍入不应简单取最近值，而应该通过优化找到使整体输出误差最小的舍入方向。</p>
-<h2 id="理论基础">理论基础</h2>
-<h3 id="从-adaround-到-autoround">从 AdaRound 到 AutoRound</h3>
+<div class="section reveal" id="理论基础">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">理论基础</h2>
+</div>
+<h3 id="从-adaround-到-autoround" class="reveal">从 AdaRound 到 AutoRound</h3>
 <p><strong>AdaRound（前身）</strong>的核心洞察：</p>
 <p>对于权重 \(w\)，量化后的值有两个候选：</p>
 <ul>
@@ -75,24 +69,24 @@
 <li>引入可学习的权重裁剪参数</li>
 <li>使用 SignSGD（签名梯度下降）进行高效优化</li>
 </ol>
-<h3 id="数学公式">数学公式</h3>
+<h3 id="数学公式" class="reveal">数学公式</h3>
 <p><strong>舍入变量参数化</strong>：</p>
-<p><div class="formula-block">\[V = \sigma(\theta_V) \in [0, 1]\]</div></p>
+<p><div class="formula">\[V = \sigma(\theta_V) \in [0, 1]\]</div></p>
 <p>其中 \(\sigma\) 是 sigmoid 函数，\(\theta_V\) 是可学习参数。</p>
 <p><strong>量化过程</strong>：</p>
-<p><div class="formula-block">\[W_q = \text{clamp}\left(\lfloor W/s \rfloor + \mathbb{1}[V > 0.5],\ q_{min},\ q_{max}\right)\]</div></p>
+<p><div class="formula">\[W_q = \text{clamp}\left(\lfloor W/s \rfloor + \mathbb{1}[V > 0.5],\ q_{min},\ q_{max}\right)\]</div></p>
 <ul>
 <li>当 \(V_i > 0.5\)：向上取整</li>
 <li>当 \(V_i \leq 0.5\)：向下取整</li>
 </ul>
 <p><strong>权重裁剪</strong>：</p>
 <p>对原始权重做软裁剪，优化裁剪范围 \([\alpha, \beta]\)：</p>
-<p><div class="formula-block">\[W_{clipped} = \text{clamp}(W, \alpha, \beta)\]</div></p>
+<p><div class="formula">\[W_{clipped} = \text{clamp}(W, \alpha, \beta)\]</div></p>
 <p>\(\alpha, \beta\) 也是可学习参数。</p>
-<h3 id="舍入变量-v-的详细参数化">舍入变量 V 的详细参数化</h3>
+<h3 id="舍入变量-v-的详细参数化" class="reveal">舍入变量 V 的详细参数化</h3>
 <h4>初始化</h4>
 <p>\(\theta_V\) 的初始化使得初始舍入方向等价于最近取整（Round-to-Nearest, RTN）：</p>
-<p><div class="formula-block">\[\theta_{V,i} = \sigma^{-1}(\text{frac}(w_i / s))\]</div></p>
+<p><div class="formula">\[\theta_{V,i} = \sigma^{-1}(\text{frac}(w_i / s))\]</div></p>
 <p>其中 \(\text{frac}(x) = x - \lfloor x \rfloor\) 是小数部分。这保证了：</p>
 <ul>
 <li>如果 \(\text{frac}(w_i/s) > 0.5\)（接近上界），则 \(\sigma(\theta_{V,i}) > 0.5\)，初始向上取整</li>
@@ -101,13 +95,13 @@
 <p>这确保了优化的起点就是 RTN，后续优化只会改善精度。</p>
 <h4>训练过程中的连续松弛</h4>
 <p>在训练时，\(V\) 不是离散的 \(\{0, 1\}\)，而是连续值 \([0, 1]\)：</p>
-<p><div class="formula-block">\[W_q = \lfloor W/s \rfloor + V\]</div></p>
+<p><div class="formula">\[W_q = \lfloor W/s \rfloor + V\]</div></p>
 <p>其中 \(V = \sigma(\theta_V) \in (0, 1)\)。</p>
 <p>量化后的权重为：</p>
-<p><div class="formula-block">\[\hat{W} = W_q \cdot s = (\lfloor W/s \rfloor + V) \cdot s\]</div></p>
+<p><div class="formula">\[\hat{W} = W_q \cdot s = (\lfloor W/s \rfloor + V) \cdot s\]</div></p>
 <p><strong>这是一种"软量化"</strong>：在训练过程中权重可以取 \(\lfloor W/s \rfloor \cdot s\) 和 \(\lceil W/s \rceil \cdot s\) 之间的任意值。只有在推理时才硬化为离散决策（\(V > 0.5\) 取上，否则取下）。</p>
 <h4>完整的量化公式（含裁剪）</h4>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
     """AutoRound 的软量化过程"""
     
@@ -132,14 +126,14 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
     
     return W_hat
 </code></pre>
-<h3 id="straight-through-estimator直通估计器">Straight-Through Estimator（直通估计器）</h3>
+<h3 id="straight-through-estimator直通估计器" class="reveal">Straight-Through Estimator（直通估计器）</h3>
 <p>量化操作（floor + clamp）是不可导的。为了通过反向传播训练 \(\theta_V\)，AutoRound 使用 <strong>Straight-Through Estimator (STE)</strong>：</p>
 <p><strong>前向传播</strong>：正常执行量化</p>
-<p><div class="formula-block">\[y = \text{floor}(x) + V\]</div></p>
+<p><div class="formula">\[y = \text{floor}(x) + V\]</div></p>
 <p><strong>反向传播</strong>：假装 floor 不存在，直接传递梯度</p>
-<p><div class="formula-block">\[\frac{\partial L}{\partial x} \approx \frac{\partial L}{\partial y}\]</div></p>
+<p><div class="formula">\[\frac{\partial L}{\partial x} \approx \frac{\partial L}{\partial y}\]</div></p>
 <p>具体到 \(\theta_V\) 的梯度链：</p>
-<p><div class="formula-block">\[\frac{\partial L}{\partial \theta_V} = \frac{\partial L}{\partial \hat{W}} \cdot \frac{\partial \hat{W}}{\partial V} \cdot \frac{\partial V}{\partial \theta_V}\]</div></p>
+<p><div class="formula">\[\frac{\partial L}{\partial \theta_V} = \frac{\partial L}{\partial \hat{W}} \cdot \frac{\partial \hat{W}}{\partial V} \cdot \frac{\partial V}{\partial \theta_V}\]</div></p>
 <p>其中：</p>
 <ul>
 <li>\(\frac{\partial \hat{W}}{\partial V} = s\)（scale，来自反量化）</li>
@@ -147,12 +141,12 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
 <li>\(\frac{\partial L}{\partial \hat{W}}\) 通过网络反向传播得到</li>
 </ul>
 <p><strong>对裁剪参数 \(\alpha, \beta\) 的梯度</strong>：</p>
-<p><div class="formula-block">\[\frac{\partial L}{\partial \alpha} = \frac{\partial L}{\partial W_{clipped}} \cdot \frac{\partial W_{clipped}}{\partial \alpha}\]</div></p>
+<p><div class="formula">\[\frac{\partial L}{\partial \alpha} = \frac{\partial L}{\partial W_{clipped}} \cdot \frac{\partial W_{clipped}}{\partial \alpha}\]</div></p>
 <p>其中 \(\frac{\partial W_{clipped}}{\partial \alpha} = \mathbb{1}[W < \alpha]\)（只有被裁剪的权重才贡献梯度）。</p>
 <p>同理 \(\frac{\partial W_{clipped}}{\partial \beta} = \mathbb{1}[W > \beta]\)。</p>
-<h3 id="block-wise-损失函数">Block-wise 损失函数</h3>
+<h3 id="block-wise-损失函数" class="reveal">Block-wise 损失函数</h3>
 <p>对每个 Transformer 层（block），优化目标为：</p>
-<p><div class="formula-block">\[\mathcal{L} = ||f(X; W + V \cdot \Delta) - f(X; W)||_2^2\]</div></p>
+<p><div class="formula">\[\mathcal{L} = ||f(X; W + V \cdot \Delta) - f(X; W)||_2^2\]</div></p>
 <p>其中：</p>
 <ul>
 <li>\(f(X; W)\)：层使用原始权重的输出</li>
@@ -160,12 +154,12 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
 <li>\(\Delta\)：舍入产生的增量（\(\Delta_i = s\) 或 \(-s\)）</li>
 </ul>
 <p><strong>更精确的表述</strong>：</p>
-<p><div class="formula-block">\[\mathcal{L} = \frac{1}{B \cdot T \cdot D} \sum_{b=1}^{B} \sum_{t=1}^{T} \sum_{d=1}^{D} (f(X; \hat{W})_{b,t,d} - f(X; W)_{b,t,d})^2\]</div></p>
+<p><div class="formula">\[\mathcal{L} = \frac{1}{B \cdot T \cdot D} \sum_{b=1}^{B} \sum_{t=1}^{T} \sum_{d=1}^{D} (f(X; \hat{W})_{b,t,d} - f(X; W)_{b,t,d})^2\]</div></p>
 <p>其中 \(B\) 是 batch size，\(T\) 是序列长度，\(D\) 是输出维度。</p>
 <p><strong>注意</strong>：这里的 \(f\) 是整个 Transformer 层（包括 attention + FFN + residual），不是单个 Linear 层。这是 AutoRound 的优势——它在层级别优化，考虑了层内各线性层之间的交互。</p>
-<h3 id="signsgd-优化">SignSGD 优化</h3>
+<h3 id="signsgd-优化" class="reveal">SignSGD 优化</h3>
 <p>AutoRound 使用 SignSGD 而非 Adam/SGD：</p>
-<p><div class="formula-block">\[\theta \leftarrow \theta - \eta \cdot \text{sign}(\nabla_\theta \mathcal{L})\]</div></p>
+<p><div class="formula">\[\theta \leftarrow \theta - \eta \cdot \text{sign}(\nabla_\theta \mathcal{L})\]</div></p>
 <p><strong>优势</strong>：</p>
 <ul>
 <li>梯度只取方向（sign），对梯度尺度不敏感</li>
@@ -180,12 +174,11 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
 <li>\(\text{sign}(\nabla_{\theta_V} L) < 0\)：loss 随 \(\theta_V\) 增大而减小 → 应增大 \(\theta_V\) → 使 \(V\) 更倾向 1 → 向上取整</li>
 </ul>
 <p><strong>与 Adam 的对比</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th></th>
 <th>SignSGD</th>
 <th>Adam</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>更新量</td>
 <td>固定 \(\pm \eta\)</td>
@@ -206,7 +199,7 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
 <td>二值决策（舍入方向）</td>
 <td>连续优化（权重训练）</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>SignSGD 的内存优势很重要：对于一个 8B 模型，每层的 \(\theta_V\) 矩阵与权重同大小。如果用 Adam，需要额外 2x 的优化器状态内存；SignSGD 不需要任何额外状态。</p>
 <h4>SignSGD 的学习率选择</h4>
 <p>学习率 \(\eta\) 对收敛至关重要：</p>
@@ -217,15 +210,15 @@ def soft_quantize(W, theta_V, alpha, beta, scale, zero_point, qmin, qmax):
 <li>若 \(\eta = 0.01\)，220 步可以完成一个舍入方向的翻转</li>
 </ul>
 <p>auto_round 库的默认学习率选择策略：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 if lr is None:
     # 根据权重维度自适应选择
     lr = 1.0 / (iters * 0.8)  # 约 0.00625 for iters=200
 </code></pre>
-<h3 id="裁剪参数的学习">裁剪参数的学习</h3>
+<h3 id="裁剪参数的学习" class="reveal">裁剪参数的学习</h3>
 <h4>初始化</h4>
 <p>裁剪参数 \(\alpha, \beta\) 初始化为权重的最小值和最大值：</p>
-<p><div class="formula-block">\[\alpha_0 = \min(W), \quad \beta_0 = \max(W)\]</div></p>
+<p><div class="formula">\[\alpha_0 = \min(W), \quad \beta_0 = \max(W)\]</div></p>
 <p>这保证初始时不裁剪任何权重（与不使用裁剪等价）。</p>
 <h4>优化过程</h4>
 <p>裁剪参数也通过 SignSGD 优化。其梯度的物理含义：</p>
@@ -243,8 +236,8 @@ if lr is None:
 <li>不裁剪：\(scale = 2.0/7 = 0.286\)，正常权重的量化精度差</li>
 <li>裁剪到 \([-0.6, 0.6]\)：\(scale = 0.6/7 = 0.086\)，正常权重精度提升 3.3 倍</li>
 </ul>
-<h3 id="迭代优化流程">迭代优化流程</h3>
-<pre><code class="language-text">
+<h3 id="迭代优化流程" class="reveal">迭代优化流程</h3>
+<pre data-lang="text"><code>
 for iter = 1 to iters (默认 200):
     1. 用当前 V 和裁剪参数对权重进行软量化
     2. 前向传播得到量化输出
@@ -256,7 +249,7 @@ for iter = 1 to iters (默认 200):
 return best_params
 </code></pre>
 <h4>详细的单次迭代</h4>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr):
     """单次优化迭代的详细过程"""
     
@@ -292,7 +285,7 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
     
     return loss.item()
 </code></pre>
-<h3 id="收敛行为分析">收敛行为分析</h3>
+<h3 id="收敛行为分析" class="reveal">收敛行为分析</h3>
 <h4>为什么 200 次迭代通常足够？</h4>
 <p><strong>理论分析</strong>：</p>
 <p>每个权重的舍入只有两种选择（上或下），目标是找到使 loss 最小的组合。对于 \(N\) 个权重，搜索空间为 \(2^N\)（天文数字）。但 AutoRound 利用了以下结构：</p>
@@ -302,12 +295,11 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <li><strong>SignSGD 的快速决策</strong>：每步固定步长，经过几十步即可让一个 \(\theta_V\) 从 "偏向上" 翻转到 "偏向下"</li>
 </ol>
 <p><strong>实验观察的收敛曲线</strong>（典型行为）：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>迭代次数</th>
 <th>Loss 相对于初始的下降</th>
 <th>状态</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>0</td>
 <td>0%（初始 = RTN 精度）</td>
@@ -343,16 +335,15 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <td>~98%</td>
 <td>边际收益递减</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p><strong>关键洞察</strong>：前 50 次迭代贡献了大部分精度提升（约 60% 的 loss 下降）。这是因为需要"翻转方向"的权重只占少数（约 5-15%），而它们的梯度信号通常很强，几十步就能完成翻转。</p>
 <h4>不同 iters 值的精度对比</h4>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>iters</th>
 <th>相对于 RTN 的 PPL 改善</th>
 <th>相对于 200 iters 的差距</th>
 <th>量化速度</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>50</td>
 <td>~70%</td>
@@ -377,7 +368,7 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <td>几乎可忽略</td>
 <td>2.5x 慢</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <h4>batch_size 对收敛的影响</h4>
 <p>每次迭代使用 <code>batch_size</code> 个样本计算梯度。更大的 batch 提供更稳定的梯度估计：</p>
 <ul>
@@ -386,11 +377,11 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <li><strong>batch_size=16</strong>：梯度更准确，可能更少迭代收敛，但内存翻倍</li>
 </ul>
 <p><strong>注意</strong>：batch_size 不是每次迭代用同样的 batch——不同迭代会随机采样不同的 batch（从缓存的校准数据中），这提供了类似数据增强的效果。</p>
-<h3 id="数值示例8-个权重的-autoround-优化过程">数值示例：8 个权重的 AutoRound 优化过程</h3>
+<h3 id="数值示例8-个权重的-autoround-优化过程" class="reveal">数值示例：8 个权重的 AutoRound 优化过程</h3>
 <p>考虑一个小线性层，权重向量 \(w = [0.73, -0.42, 0.15, 0.91, -0.28, 0.56, -0.84, 0.37]\)</p>
 <p>4-bit 对称量化，\(scale = 0.91/7 = 0.13\)</p>
 <p><strong>RTN 量化</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>权重</th>
 <th>\(w/s\)</th>
 <th>floor</th>
@@ -398,8 +389,7 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <th>RTN取整</th>
 <th>量化值</th>
 <th>误差</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>0.73</td>
 <td>5.62</td>
@@ -472,7 +462,7 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <td>0.39</td>
 <td>-0.02</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p><strong>初始化 \(\theta_V\)</strong>：</p>
 <p>\(\theta_V = \sigma^{-1}(\text{frac}) = \sigma^{-1}([0.62, 0.77, 0.15, 0.0, 0.85, 0.31, 0.54, 0.85])\)</p>
 <p>\(= [0.49, 1.21, -1.73, -\infty, 1.73, -0.80, 0.16, 1.73]\)</p>
@@ -491,9 +481,13 @@ def single_iteration(theta_V, alpha, beta, W_orig, X_batch, Y_ref, scale, zp, lr
 <li>即 \(\hat{w}_6 = -7 \times 0.13 = -0.91\)（而非 RTN 的 -0.78）</li>
 </ul>
 <p>这意味着 AutoRound "发现"对于这个权重，向下取整（虽然距离更远）在考虑整体层输出时反而更好。</p>
-<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
-<h3 id="autoroundmodifier">AutoRoundModifier</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="在-llm-compressor-中的实现">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">在 LLM Compressor 中的实现</h2>
+</div>
+<h3 id="autoroundmodifier" class="reveal">AutoRoundModifier</h3>
+<pre data-lang="python"><code>
 # src/llmcompressor/modifiers/autoround/base.py
 
 class AutoRoundModifier(Modifier, QuantizationMixin):
@@ -503,8 +497,8 @@ class AutoRoundModifier(Modifier, QuantizationMixin):
     lr: float | None = None             # 学习率（None=自动）
     device_ids: str | None = None       # 多 GPU 设备映射
 </code></pre>
-<h3 id="生命周期">生命周期</h3>
-<pre><code class="language-python">
+<h3 id="生命周期" class="reveal">生命周期</h3>
+<pre data-lang="python"><code>
 def on_initialize(self, state):
     # 1. 应用量化配置（QuantizationMixin）
     self.initialize_quantization(state.model)
@@ -527,9 +521,9 @@ def on_end(self, state):
     # 恢复最佳参数，清理临时状态
     restore_best_params()
 </code></pre>
-<h3 id="与-intel-auto-round-库的集成">与 Intel auto-round 库的集成</h3>
+<h3 id="与-intel-auto-round-库的集成" class="reveal">与 Intel auto-round 库的集成</h3>
 <p>LLM Compressor 的 AutoRound 实现依赖 Intel 的 <code>auto_round</code> 库：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # 内部调用 auto_round 的优化逻辑
 from auto_round import AutoRound as IntelAutoRound
 
@@ -553,8 +547,8 @@ def _apply_autoround(self, layer, cached_inputs):
     module.weight_scale = autoround.scale
     module.input_scale = autoround.act_scale
 </code></pre>
-<h3 id="优化循环的内部实现细节">优化循环的内部实现细节</h3>
-<pre><code class="language-python">
+<h3 id="优化循环的内部实现细节" class="reveal">优化循环的内部实现细节</h3>
+<pre data-lang="python"><code>
 class AutoRoundOptimizer:
     """Intel auto_round 库的核心优化逻辑（简化展示）"""
     
@@ -624,9 +618,9 @@ class AutoRoundOptimizer:
         self._restore_params(best_params)
         self._harden_rounding()  # V &gt; 0.5 → 1, V ≤ 0.5 → 0
 </code></pre>
-<h3 id="torchcompile-加速">torch.compile 加速</h3>
+<h3 id="torchcompile-加速" class="reveal">torch.compile 加速</h3>
 <p>AutoRound 支持使用 <code>torch.compile</code> 加速前向传播和反向传播：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 if self.enable_torch_compile:
     # 编译前向传播函数
     self._compiled_forward = torch.compile(
@@ -641,13 +635,12 @@ if self.enable_torch_compile:
 <li>内存访问优化</li>
 </ul>
 <p>对于 200 次迭代 × 多层，累积加速效果显著（整体量化时间减少 30-50%）。</p>
-<h3 id="量化参数映射">量化参数映射</h3>
-<table><thead><tr>
+<h3 id="量化参数映射" class="reveal">量化参数映射</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>AutoRound 参数</th>
 <th>LLM Compressor 参数</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>scale</code></td>
 <td><code>weight_scale</code></td>
@@ -668,10 +661,14 @@ if self.enable_torch_compile:
 <td><code>input_global_scale</code></td>
 <td>激活全局缩放</td>
 </tr>
-</tbody></table>
-<h2 id="使用示例">使用示例</h2>
-<h3 id="示例-1w4a16-autoround">示例 1：W4A16 AutoRound</h3>
-<pre><code class="language-python">
+</tbody></table></div>
+<div class="section reveal" id="使用示例">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">使用示例</h2>
+</div>
+<h3 id="示例-1w4a16-autoround" class="reveal">示例 1：W4A16 AutoRound</h3>
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from llmcompressor import oneshot
@@ -699,8 +696,8 @@ oneshot(
 
 model.save_pretrained("Llama-3-8B-W4A16-AutoRound")
 </code></pre>
-<h3 id="示例-2fp8-block-量化">示例 2：FP8 Block 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例-2fp8-block-量化" class="reveal">示例 2：FP8 Block 量化</h3>
+<pre data-lang="python"><code>
 recipe = AutoRoundModifier(
     targets="Linear",
     scheme="FP8_BLOCK",
@@ -710,8 +707,8 @@ recipe = AutoRoundModifier(
     enable_torch_compile=True,  # 加速优化
 )
 </code></pre>
-<h3 id="示例-3nvfp4-量化">示例 3：NVFP4 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例-3nvfp4-量化" class="reveal">示例 3：NVFP4 量化</h3>
+<pre data-lang="python"><code>
 recipe = AutoRoundModifier(
     targets="Linear",
     scheme="W4A4",            # NVFP4 权重 + 激活
@@ -719,8 +716,8 @@ recipe = AutoRoundModifier(
     iters=200,
 )
 </code></pre>
-<h3 id="示例-4多-gpu-加速">示例 4：多 GPU 加速</h3>
-<pre><code class="language-python">
+<h3 id="示例-4多-gpu-加速" class="reveal">示例 4：多 GPU 加速</h3>
+<pre data-lang="python"><code>
 recipe = AutoRoundModifier(
     targets="Linear",
     scheme="W4A16",
@@ -729,13 +726,16 @@ recipe = AutoRoundModifier(
     device_ids="0,1",  # 将不同层分配到不同 GPU
 )
 </code></pre>
-<h2 id="参数说明">参数说明</h2>
-<table><thead><tr>
+<div class="section reveal" id="参数说明">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">参数说明</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>参数</th>
 <th>默认值</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>iters</code></td>
 <td>200</td>
@@ -761,13 +761,16 @@ recipe = AutoRoundModifier(
 <td>None</td>
 <td>多 GPU 设备映射（如 "0,1" 或 "auto"）</td>
 </tr>
-</tbody></table>
-<h2 id="参数调优指南">参数调优指南</h2>
-<table><thead><tr>
+</tbody></table></div>
+<div class="section reveal" id="参数调优指南">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">参数调优指南</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>需求</th>
 <th>调整</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>提高精度</td>
 <td>增大 <code>iters</code>（300-500）、增大 <code>batch_size</code>（16）</td>
@@ -780,10 +783,10 @@ recipe = AutoRoundModifier(
 <td>减少内存</td>
 <td>减小 <code>batch_size</code>（4）、使用 <code>device_ids</code> 分配</td>
 </tr>
-</tbody></table>
-<h3 id="详细参数调优建议">详细参数调优建议</h3>
+</tbody></table></div>
+<h3 id="详细参数调优建议" class="reveal">详细参数调优建议</h3>
 <h4>iters 的选择策略</h4>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 低比特（2-3 bit）→ 增大 iters（300-500），因为搜索空间中更多权重需要翻转
 标准 4-bit      → 默认 200 通常足够
 高比特（8-bit）  → 可减少到 100，因为 RTN 本身已经接近最优
@@ -791,7 +794,7 @@ FP8/NVFP4       → 200 是安全选择
 </code></pre>
 <h4>lr 的手动设置</h4>
 <p>通常不需要手动设置 lr（auto_round 会自动选择）。但如果需要：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # 较大 lr：更快收敛，但可能振荡
 recipe = AutoRoundModifier(iters=100, lr=0.02, ...)
 
@@ -799,7 +802,7 @@ recipe = AutoRoundModifier(iters=100, lr=0.02, ...)
 recipe = AutoRoundModifier(iters=500, lr=0.005, ...)
 </code></pre>
 <h4>enable_torch_compile 的注意事项</h4>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # torch.compile 在以下情况可能不适用：
 # 1. 模型含动态 shape（如可变序列长度）→ 首次编译后 shape 变化会触发重编译
 # 2. 使用了不支持的自定义算子
@@ -807,14 +810,17 @@ recipe = AutoRoundModifier(iters=500, lr=0.005, ...)
 # 遇到问题时关闭：
 recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 </code></pre>
-<h2 id="autoround-内存开销分析">AutoRound 内存开销分析</h2>
+<div class="section reveal" id="autoround-内存开销分析">
+<div class="section-header">
+<div class="section-number">7</div>
+<h2 class="section-title">AutoRound 内存开销分析</h2>
+</div>
 <p>对于一个 Linear 层（权重形状 \([C_{out}, C_{in}]\)）：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>组件</th>
 <th>内存</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>原始权重 \(W\)</td>
 <td>\(C_{out} \times C_{in} \times 2\) bytes</td>
@@ -845,7 +851,7 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <td>\(B \times T \times C_{out} \times 2\) bytes</td>
 <td>FP16</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p><strong>示例</strong>：对于 Llama-3-8B 的一个 FFN 层（\(C_{in}=4096, C_{out}=14336\)）：</p>
 <ul>
 <li>\(\theta_V\) + 梯度：\(4096 \times 14336 \times 8 = 448\) MB</li>
@@ -854,7 +860,11 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <li>总额外开销：约 450 MB/层</li>
 </ul>
 <p>这就是为什么 AutoRound 内存消耗大于 GPTQ（后者只需要一个 \(C_{in} \times C_{in}\) 的 Hessian 矩阵 = 64 MB）。</p>
-<h2 id="autoround-的优缺点">AutoRound 的优缺点</h2>
+<div class="section reveal" id="autoround-的优缺点">
+<div class="section-header">
+<div class="section-number">8</div>
+<h2 class="section-title">AutoRound 的优缺点</h2>
+</div>
 <p><strong>优点</strong>：</p>
 <ul>
 <li>4-bit 精度优异（通常略优于 GPTQ）</li>
@@ -870,13 +880,16 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <li>内存开销较大（需要缓存输入和中间梯度）</li>
 <li>超参数较多（iters、lr、batch_size）</li>
 </ul>
-<h2 id="与-gptq-的对比">与 GPTQ 的对比</h2>
-<table><thead><tr>
+<div class="section reveal" id="与-gptq-的对比">
+<div class="section-header">
+<div class="section-number">9</div>
+<h2 class="section-title">与 GPTQ 的对比</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th></th>
 <th>AutoRound</th>
 <th>GPTQ</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>优化方式</td>
 <td>迭代梯度优化</td>
@@ -907,8 +920,8 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <td>略优（尤其低比特）</td>
 <td>优秀</td>
 </tr>
-</tbody></table>
-<h3 id="深度对比autoround-vs-gptq-的本质区别">深度对比：AutoRound vs GPTQ 的本质区别</h3>
+</tbody></table></div>
+<h3 id="深度对比autoround-vs-gptq-的本质区别" class="reveal">深度对比：AutoRound vs GPTQ 的本质区别</h3>
 <p><strong>GPTQ 的视角</strong>：将量化看作一个有约束的线性代数问题。利用 Hessian（二阶信息）在闭式下计算最优补偿。一次性完成，无需迭代。但只优化"误差补偿到后续列"，不改变当前列的舍入方向。</p>
 <p><strong>AutoRound 的视角</strong>：将量化看作一个优化问题。通过梯度下降搜索最优的舍入方向组合。多次迭代逼近最优解。可以翻转任何权重的舍入方向，自由度更大。</p>
 <p><strong>类比</strong>：</p>
@@ -922,8 +935,12 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <li>AutoRound 考虑层内所有 Linear 层的交互（GPTQ 逐模块独立）</li>
 <li>AutoRound 的裁剪优化相当于在 scale 维度也做了优化</li>
 </ol>
-<h2 id="常见问题">常见问题</h2>
-<h3 id="q-为什么-autoround-比-gptq-慢这么多">Q: 为什么 AutoRound 比 GPTQ 慢这么多？</h3>
+<div class="section reveal" id="常见问题">
+<div class="section-header">
+<div class="section-number">10</div>
+<h2 class="section-title">常见问题</h2>
+</div>
+<h3 id="q-为什么-autoround-比-gptq-慢这么多" class="reveal">Q: 为什么 AutoRound 比 GPTQ 慢这么多？</h3>
 <p><strong>答</strong>：GPTQ 对每个 Linear 层只需一次遍历（单次 Cholesky + 逐列量化），而 AutoRound 需要 200 次前向 + 反向传播。对于一个 Transformer 层含 7 个 Linear 层（q/k/v/o_proj + gate/up/down_proj），AutoRound 的计算量约为 GPTQ 的 50-100 倍。</p>
 <p>但 AutoRound 的优势在于：</p>
 <ul>
@@ -931,7 +948,7 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <li>torch.compile 可以显著加速</li>
 <li>可以利用多 GPU 并行</li>
 </ul>
-<h3 id="q-什么时候选-autoround-而非-gptq">Q: 什么时候选 AutoRound 而非 GPTQ？</h3>
+<h3 id="q-什么时候选-autoround-而非-gptq" class="reveal">Q: 什么时候选 AutoRound 而非 GPTQ？</h3>
 <p>选择 AutoRound 的场景：</p>
 <ol>
 <li>极低比特（2-3 bit）：AutoRound 的优势更明显</li>
@@ -945,10 +962,10 @@ recipe = AutoRoundModifier(enable_torch_compile=False, ...)
 <li>需要快速量化：GPTQ 快 5-10 倍</li>
 <li>资源受限：GPTQ 内存开销更小</li>
 </ol>
-
-<div class="page-nav"><a href="05-awq.html"><span><span class="label">上一篇</span>&larr; 05 - AWQ 量化详解</span></a><a href="07-smoothquant.html"><span><span class="label">下一篇</span>07 - SmoothQuant 详解 &rarr;</span></a></div>
     </div>
-  </main>
+<div class="page-nav"><a href="05-awq.html"><span class="nav-label">← 上一篇</span><span class="nav-title">AWQ</span></a><a href="07-smoothquant.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">SmoothQuant</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

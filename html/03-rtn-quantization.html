@@ -7,60 +7,59 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html" class="active">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html" class="active">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 03</span>
+    <h1>RTN（Round-to-Nearest）最近舍入量化</h1>
+    <p class="subtitle">最简单的量化方法——FP8 Dynamic / FP8 Block / W4A16 全面解析</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#算法概述">算法概述</a></li>
-          <li><a href="#详细原理">详细原理</a></li>
-          <li><a href="#在-llm-compressor-中的完整实现流程">在 LLM Compressor 中的完整实现流程</a></li>
-          <li><a href="#各场景详细使用指南">各场景详细使用指南</a></li>
-          <li><a href="#性能对比总结">性能对比总结</a></li>
-        </ol>
-      </div>
-<h1 id="rtnround-to-nearest最近舍入量化">RTN（Round-to-Nearest）最近舍入量化</h1>
-<h2 id="算法概述">算法概述</h2>
+<div class="section reveal" id="算法概述">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">算法概述</h2>
+</div>
 <p>RTN 是最简单也是最基础的量化方法——将每个权重值舍入到最近的量化级别。虽然简单，但对于高精度格式（如 FP8），RTN 已经能获得接近无损的效果。</p>
 <p>LLM Compressor 中 RTN 通过 <code>QuantizationModifier</code> 实现，支持多种 scheme 配置。</p>
-<p>---</p>
-<h2 id="详细原理">详细原理</h2>
-<h3 id="核心数学过程">核心数学过程</h3>
+</div>
+<div class="section reveal" id="详细原理">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">详细原理</h2>
+</div>
+<h3 id="核心数学过程" class="reveal">核心数学过程</h3>
 <p>RTN 量化由三步组成：</p>
 <p><strong>Step 1: 确定量化范围与缩放因子</strong></p>
 <p>对称量化模式：</p>
-<p><div class="formula-block">\[s = \frac{\max(|W|)}{q_{max}}\]</div></p>
+<p><div class="formula">\[s = \frac{\max(|W|)}{q_{max}}\]</div></p>
 <p>其中 \(q_{max}\) 取决于数据类型：</p>
 <ul>
 <li>INT8 对称：\(q_{max} = 127\)</li>
@@ -68,12 +67,12 @@
 <li>FP8 E4M3：\(q_{max} = 448\)</li>
 </ul>
 <p>非对称量化模式：</p>
-<p><div class="formula-block">\[s = \frac{W_{max} - W_{min}}{q_{max} - q_{min}}, \quad z = q_{min} - \text{round}\left(\frac{W_{min}}{s}\right)\]</div></p>
+<p><div class="formula">\[s = \frac{W_{max} - W_{min}}{q_{max} - q_{min}}, \quad z = q_{min} - \text{round}\left(\frac{W_{min}}{s}\right)\]</div></p>
 <p><strong>Step 2: 量化（float → int/fp8）</strong></p>
-<p><div class="formula-block">\[W_q = \text{clamp}\left(\text{round}\left(\frac{W}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
+<p><div class="formula">\[W_q = \text{clamp}\left(\text{round}\left(\frac{W}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
 <p><strong>Step 3: 反量化（推理时恢复近似浮点值）</strong></p>
-<p><div class="formula-block">\[\hat{W} = s \cdot (W_q - z)\]</div></p>
-<h3 id="为什么-fp8_dynamic-rtn-就足够了">为什么 FP8_DYNAMIC + RTN 就足够了？</h3>
+<p><div class="formula">\[\hat{W} = s \cdot (W_q - z)\]</div></p>
+<h3 id="为什么-fp8_dynamic-rtn-就足够了" class="reveal">为什么 FP8_DYNAMIC + RTN 就足够了？</h3>
 <p><strong>FP8 E4M3 的精度分析</strong>：</p>
 <p>FP8 E4M3 格式有 4 位指数和 3 位尾数：</p>
 <ul>
@@ -89,12 +88,12 @@
 </ul>
 <p><strong>量化误差的数学分析</strong>：</p>
 <p>对于 FP8，由于对数间距，在值 \(x\) 处的量化步长约为 \(x \cdot 2^{-3}\)（3 位尾数）。因此相对误差：</p>
-<p><div class="formula-block">\[\frac{|\Delta W|}{|W|} \approx \frac{1}{2} \cdot 2^{-3} = 6.25\%\]</div></p>
+<p><div class="formula">\[\frac{|\Delta W|}{|W|} \approx \frac{1}{2} \cdot 2^{-3} = 6.25\%\]</div></p>
 <p>但由于 per-channel 量化，每个通道的 scale 适配其实际范围，实际误差远小于此理论上界。</p>
-<h3 id="fp8_dynamic-的工作机制详解">FP8_DYNAMIC 的工作机制详解</h3>
+<h3 id="fp8_dynamic-的工作机制详解" class="reveal">FP8_DYNAMIC 的工作机制详解</h3>
 <p>FP8_DYNAMIC scheme 实际包含两部分：</p>
 <p><strong>权重量化（静态，per-channel）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 对于每一行 W[i, :]:
     scale[i] = max(|W[i, :]|) / 448.0
     W_q[i, :] = cast_to_fp8_e4m3(W[i, :] / scale[i])
@@ -104,7 +103,7 @@
 <li>推理时不需要重新计算</li>
 </ul>
 <p><strong>激活量化（动态，per-token）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 对于每个输入 token X[t, :]:
     scale[t] = max(|X[t, :]|) / 448.0   # 推理时实时计算
     X_q[t, :] = cast_to_fp8_e4m3(X[t, :] / scale[t])
@@ -115,12 +114,12 @@
 <li>这就是为什么 FP8_DYNAMIC 不需要校准数据</li>
 </ul>
 <p><strong>矩阵乘法执行</strong>：</p>
-<p><div class="formula-block">\[Y[t, i] = \text{scale\_x}[t] \cdot \text{scale\_w}[i] \cdot \sum_j X_q[t,j] \cdot W_q[i,j]\]</div></p>
+<p><div class="formula">\[Y[t, i] = \text{scale\_x}[t] \cdot \text{scale\_w}[i] \cdot \sum_j X_q[t,j] \cdot W_q[i,j]\]</div></p>
 <p>GPU 执行 FP8×FP8 矩阵乘法（Hopper/Ada FP8 Tensor Core），然后乘以两个 scale 恢复正确数值范围。</p>
-<h3 id="fp8_block-的工作机制详解">FP8_BLOCK 的工作机制详解</h3>
+<h3 id="fp8_block-的工作机制详解" class="reveal">FP8_BLOCK 的工作机制详解</h3>
 <p>FP8_BLOCK 是 DeepSeek-V3 采用的量化风格，更细粒度：</p>
 <p><strong>权重量化（block-wise，128×128 块）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 将权重矩阵切分为 128×128 的块：
 W = [B_00  B_01  ...]
     [B_10  B_11  ...]
@@ -135,19 +134,18 @@ W = [B_00  B_01  ...]
 <li>权重中不同区域的量化更精确</li>
 </ul>
 <p><strong>激活量化（block-wise 动态）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 将激活切分为 1×128 的块（沿隐藏维度每 128 个元素一个 scale）：
 对于 X[t, j*128 : (j+1)*128]:
     scale[t,j] = max(|X[t, j*128:(j+1)*128]|) / 448.0
     X_q[t, j*128:(j+1)*128] = cast_to_fp8(X / scale)
 </code></pre>
 <p><strong>与 FP8_DYNAMIC 的关键区别</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>特性</th>
 <th>FP8_DYNAMIC</th>
 <th>FP8_BLOCK</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>权重 scale 粒度</td>
 <td>per-channel (每行 1 个 scale)</td>
@@ -173,10 +171,10 @@ W = [B_00  B_01  ...]
 <td>scale 很少</td>
 <td>scale 稍多（但仍为 FP32）</td>
 </tr>
-</tbody></table>
-<h3 id="w4a16-rtn-的精度问题详解">W4A16 RTN 的精度问题详解</h3>
+</tbody></table></div>
+<h3 id="w4a16-rtn-的精度问题详解" class="reveal">W4A16 RTN 的精度问题详解</h3>
 <p>当用 RTN 做 4-bit 量化时，仅有 <strong>16 个量化级别</strong>（INT4 对称：-8 到 7）：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 原始权重: [-0.23, 0.15, -0.08, 0.31, -0.45, 0.02, ...]
 
 scale = 0.45 / 7 = 0.064 (per-group, group_size=128)
@@ -194,10 +192,14 @@ scale = 0.45 / 7 = 0.064 (per-group, group_size=128)
 <li>误差在各层之间<strong>无补偿</strong>，逐层累积</li>
 </ol>
 <p>这就是为什么 4-bit 部署需要 GPTQ/AWQ——它们通过误差补偿和通道保护来克服这些问题。</p>
-<p>---</p>
-<h2 id="在-llm-compressor-中的完整实现流程">在 LLM Compressor 中的完整实现流程</h2>
-<h3 id="quantizationmodifier-的内部机制">QuantizationModifier 的内部机制</h3>
-<pre><code class="language-python">
+</div>
+<div class="section reveal" id="在-llm-compressor-中的完整实现流程">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">在 LLM Compressor 中的完整实现流程</h2>
+</div>
+<h3 id="quantizationmodifier-的内部机制" class="reveal">QuantizationModifier 的内部机制</h3>
+<pre data-lang="python"><code>
 # 完整的 RTN 量化执行流程
 
 class QuantizationModifier:
@@ -253,9 +255,9 @@ class QuantizationModifier:
                 del module.input_observer
             remove_all_hooks()
 </code></pre>
-<h3 id="datafree-pipeline-的工作方式">DataFree Pipeline 的工作方式</h3>
+<h3 id="datafree-pipeline-的工作方式" class="reveal">DataFree Pipeline 的工作方式</h3>
 <p>当不提供校准数据时（FP8_DYNAMIC、FP8_BLOCK）：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 class DataFreePipeline:
     def run(self, model, modifiers):
         """无前向传播，直接初始化和完成"""
@@ -270,9 +272,13 @@ class DataFreePipeline:
         for mod in modifiers:
             mod.on_finalize(state)
 </code></pre>
-<p>---</p>
-<h2 id="各场景详细使用指南">各场景详细使用指南</h2>
-<h3 id="场景-1快速部署精度要求高-fp8_dynamic">场景 1：快速部署，精度要求高 → FP8_DYNAMIC</h3>
+</div>
+<div class="section reveal" id="各场景详细使用指南">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">各场景详细使用指南</h2>
+</div>
+<h3 id="场景-1快速部署精度要求高-fp8_dynamic" class="reveal">场景 1：快速部署，精度要求高 → FP8_DYNAMIC</h3>
 <p><strong>适用条件</strong>：</p>
 <ul>
 <li>有 Hopper (H100) 或 Ada (RTX 4090/L40S) GPU</li>
@@ -280,7 +286,7 @@ class DataFreePipeline:
 <li>可以接受约 2× 压缩</li>
 <li>精度损失需要极小（perplexity 增加 < 0.1）</li>
 </ul>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from compressed_tensors.offload import dispatch_model
 from llmcompressor import oneshot
@@ -307,8 +313,8 @@ print(tokenizer.decode(output[0]))
 model.save_pretrained("Llama-3-8B-FP8-Dynamic")
 tokenizer.save_pretrained("Llama-3-8B-FP8-Dynamic")
 </code></pre>
-<h3 id="场景-2deepseek-风格部署-fp8_block">场景 2：DeepSeek 风格部署 → FP8_BLOCK</h3>
-<pre><code class="language-python">
+<h3 id="场景-2deepseek-风格部署-fp8_block" class="reveal">场景 2：DeepSeek 风格部署 → FP8_BLOCK</h3>
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="FP8_BLOCK",
@@ -316,8 +322,8 @@ recipe = QuantizationModifier(
 )
 oneshot(model=model, recipe=recipe)
 </code></pre>
-<h3 id="场景-3快速验证-w4a16-rtn仅测试用">场景 3：快速验证 → W4A16 RTN（仅测试用）</h3>
-<pre><code class="language-python">
+<h3 id="场景-3快速验证-w4a16-rtn仅测试用" class="reveal">场景 3：快速验证 → W4A16 RTN（仅测试用）</h3>
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="W4A16",
@@ -326,8 +332,8 @@ recipe = QuantizationModifier(
 oneshot(model=model, recipe=recipe)
 # 注意：生产环境请用 GPTQ/AWQ！
 </code></pre>
-<h3 id="场景-4生产-4-bit-gptq">场景 4：生产 4-bit → GPTQ</h3>
-<pre><code class="language-python">
+<h3 id="场景-4生产-4-bit-gptq" class="reveal">场景 4：生产 4-bit → GPTQ</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.gptq import GPTQModifier
 
 recipe = GPTQModifier(
@@ -337,17 +343,20 @@ recipe = GPTQModifier(
 oneshot(model=model, recipe=recipe, dataset=dataset,
         num_calibration_samples=512, max_seq_length=2048)
 </code></pre>
-<p>---</p>
-<h2 id="性能对比总结">性能对比总结</h2>
-<table><thead><tr>
+</div>
+<div class="section reveal" id="性能对比总结">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">性能对比总结</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>方法</th>
 <th>压缩比</th>
 <th>量化时间(8B)</th>
 <th>Perplexity 增加</th>
 <th>需要数据</th>
 <th>推荐场景</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>FP8_DYNAMIC RTN</td>
 <td>2×</td>
@@ -404,11 +413,11 @@ oneshot(model=model, recipe=recipe, dataset=dataset,
 <td>是</td>
 <td>追求极致精度</td>
 </tr>
-</tbody></table>
-
-<div class="page-nav"><a href="02-quantization-fundamentals.html"><span><span class="label">上一篇</span>&larr; 02 - 量化基础理论</span></a><a href="04-gptq.html"><span><span class="label">下一篇</span>04 - GPTQ 量化详解 &rarr;</span></a></div>
+</tbody></table></div>
     </div>
-  </main>
+<div class="page-nav"><a href="02-quantization-fundamentals.html"><span class="nav-label">← 上一篇</span><span class="nav-title">基础理论</span></a><a href="04-gptq.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">GPTQ</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

@@ -7,60 +7,53 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html" class="active">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html" class="active">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 13</span>
+    <h1>问题排查与最佳实践</h1>
+    <p class="subtitle">OOM、精度下降、vLLM 部署等常见问题排查</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#常见错误与解决方案">常见错误与解决方案</a></li>
-          <li><a href="#精度调优检查清单">精度调优检查清单</a></li>
-          <li><a href="#性能优化">性能优化</a></li>
-          <li><a href="#vllm-推理部署">vLLM 推理部署</a></li>
-          <li><a href="#评估方法">评估方法</a></li>
-          <li><a href="#最佳实践总结">最佳实践总结</a></li>
-        </ol>
-      </div>
-<h1 id="问题排查与最佳实践">问题排查与最佳实践</h1>
-<h2 id="常见错误与解决方案">常见错误与解决方案</h2>
-<h3 id="1-oom内存溢出">1. OOM（内存溢出）</h3>
+<div class="section reveal" id="常见错误与解决方案">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">常见错误与解决方案</h2>
+</div>
+<h3 id="1-oom内存溢出" class="reveal">1. OOM（内存溢出）</h3>
 <p><strong>症状</strong>：<code>RuntimeError: CUDA out of memory</code> 或 <code>torch.cuda.OutOfMemoryError</code></p>
 <p><strong>解决方案</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>原因</th>
 <th>解决</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>模型太大无法加载</td>
 <td>使用 <code>device_map=None</code> + Sequential Onloading</td>
@@ -85,8 +78,8 @@
 <td>模型加 CPU 内存也不够</td>
 <td>使用磁盘卸载或 <code>model_free_ptq</code></td>
 </tr>
-</tbody></table>
-<pre><code class="language-python">
+</tbody></table></div>
+<pre data-lang="python"><code>
 # OOM 时的保守配置
 oneshot(
     model=model,
@@ -96,11 +89,11 @@ oneshot(
     max_seq_length=1024,          # 减短序列
 )
 </code></pre>
-<h3 id="2-cholesky-分解失败gptq">2. Cholesky 分解失败（GPTQ）</h3>
+<h3 id="2-cholesky-分解失败gptq" class="reveal">2. Cholesky 分解失败（GPTQ）</h3>
 <p><strong>症状</strong>：<code>torch._C._LinAlgError: linalg_cholesky_ex: ...</code> 或警告 <code>Failed to invert hessian due to numerical instability</code></p>
 <p><strong>原因</strong>：Hessian 矩阵条件数过大或存在零行/列</p>
 <p><strong>解决方案</strong>：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = GPTQModifier(
     targets="Linear",
     scheme="W4A16",
@@ -115,7 +108,7 @@ recipe = GPTQModifier(
 <li>打乱校准数据顺序（避免样本过于相似）</li>
 <li>检查是否有全零输入导致 Hessian 退化</li>
 </ul>
-<h3 id="3-量化后精度严重下降">3. 量化后精度严重下降</h3>
+<h3 id="3-量化后精度严重下降" class="reveal">3. 量化后精度严重下降</h3>
 <p><strong>排查检查清单</strong>：</p>
 <ol>
 <li><strong>检查 ignore 列表</strong>：<code>lm_head</code> 是否被排除？MoE 的 gate 层？</li>
@@ -124,7 +117,7 @@ recipe = GPTQModifier(
 <li><strong>检查 group_size</strong>：INT4 建议 group_size=128</li>
 </ol>
 <p><strong>逐步提升精度的策略</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 RTN W4A16           （基线，精度最低）
 → + actorder        （启用激活排序）
 → GPTQ W4A16       （Hessian 补偿）
@@ -132,7 +125,7 @@ RTN W4A16           （基线，精度最低）
 → + IMatrix         （重要性加权）
 → + SpinQuant       （旋转降相干性）
 </code></pre>
-<h3 id="4-校准数据格式错误">4. 校准数据格式错误</h3>
+<h3 id="4-校准数据格式错误" class="reveal">4. 校准数据格式错误</h3>
 <p><strong>症状</strong>：<code>KeyError</code>、<code>TypeError</code>、或输出全为 padding</p>
 <p><strong>常见问题</strong>：</p>
 <ul>
@@ -141,7 +134,7 @@ RTN W4A16           （基线，精度最低）
 <li>多模态模型需要 processor 而非 tokenizer</li>
 </ul>
 <p><strong>解决</strong>：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # 确保数据集格式正确
 from datasets import load_dataset
 
@@ -156,13 +149,12 @@ def preprocess(example):
 
 dataset = dataset.map(preprocess)
 </code></pre>
-<h3 id="5-vllm-加载量化模型失败">5. vLLM 加载量化模型失败</h3>
+<h3 id="5-vllm-加载量化模型失败" class="reveal">5. vLLM 加载量化模型失败</h3>
 <p><strong>常见原因</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>问题</th>
 <th>解决</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>vLLM 版本太旧</td>
 <td>升级到最新版本</td>
@@ -179,8 +171,8 @@ dataset = dataset.map(preprocess)
 <td>config.json 缺少量化元数据</td>
 <td>使用 <code>model.save_pretrained()</code> 保存</td>
 </tr>
-</tbody></table>
-<pre><code class="language-python">
+</tbody></table></div>
+<pre data-lang="python"><code>
 # 正确保存方式
 model.save_pretrained("output_dir")
 tokenizer.save_pretrained("output_dir")
@@ -189,8 +181,12 @@ tokenizer.save_pretrained("output_dir")
 from vllm import LLM
 llm = LLM(model="output_dir")
 </code></pre>
-<h2 id="精度调优检查清单">精度调优检查清单</h2>
-<h3 id="必做项">必做项</h3>
+<div class="section reveal" id="精度调优检查清单">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">精度调优检查清单</h2>
+</div>
+<h3 id="必做项" class="reveal">必做项</h3>
 <ul>
 <li>[ ] <code>lm_head</code> 层已加入 <code>ignore</code> 列表</li>
 <li>[ ] MoE 模型的 gate/router 层已排除</li>
@@ -198,7 +194,7 @@ llm = LLM(model="output_dir")
 <li>[ ] 校准序列长度 ≥ 2048</li>
 <li>[ ] 校准数据覆盖目标使用场景</li>
 </ul>
-<h3 id="可选优化">可选优化</h3>
+<h3 id="可选优化" class="reveal">可选优化</h3>
 <ul>
 <li>[ ] 启用 <code>actorder="static"</code>（GPTQ）</li>
 <li>[ ] 增大 <code>dampening_frac</code> 到 0.02-0.05（GPTQ 数值更稳定）</li>
@@ -207,14 +203,17 @@ llm = LLM(model="output_dir")
 <li>[ ] 添加 SpinQuant 旋转（DataFree 场景）</li>
 <li>[ ] 使用 <code>mse</code> observer 替代 <code>minmax</code></li>
 </ul>
-<h2 id="性能优化">性能优化</h2>
-<h3 id="减少量化时间">减少量化时间</h3>
-<table><thead><tr>
+<div class="section reveal" id="性能优化">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">性能优化</h2>
+</div>
+<h3 id="减少量化时间" class="reveal">减少量化时间</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>方法</th>
 <th>加速倍数</th>
 <th>代价</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>DDP 多卡</td>
 <td>~线性加速</td>
@@ -240,9 +239,9 @@ llm = LLM(model="output_dir")
 <td>~1.3-1.5×</td>
 <td>首次编译较慢</td>
 </tr>
-</tbody></table>
-<h3 id="内存优化">内存优化</h3>
-<pre><code class="language-python">
+</tbody></table></div>
+<h3 id="内存优化" class="reveal">内存优化</h3>
+<pre data-lang="python"><code>
 # 大模型量化的内存优化配置
 recipe = GPTQModifier(
     targets="Linear",
@@ -260,9 +259,13 @@ oneshot(
     sequential_targets=["LlamaDecoderLayer"],
 )
 </code></pre>
-<h2 id="vllm-推理部署">vLLM 推理部署</h2>
-<h3 id="基本部署">基本部署</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="vllm-推理部署">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">vLLM 推理部署</h2>
+</div>
+<h3 id="基本部署" class="reveal">基本部署</h3>
+<pre data-lang="python"><code>
 from vllm import LLM, SamplingParams
 
 # 加载量化模型（自动识别 compressed-tensors 格式）
@@ -272,20 +275,19 @@ llm = LLM(model="path/to/quantized_model")
 sampling_params = SamplingParams(temperature=0.7, max_tokens=256)
 outputs = llm.generate(["Hello, world!"], sampling_params)
 </code></pre>
-<h3 id="fp8-kv-cache-推理">FP8 KV Cache 推理</h3>
-<pre><code class="language-python">
+<h3 id="fp8-kv-cache-推理" class="reveal">FP8 KV Cache 推理</h3>
+<pre data-lang="python"><code>
 llm = LLM(
     model="path/to/model_with_kv_quant",
     kv_cache_dtype="fp8",  # 启用 FP8 KV Cache
 )
 </code></pre>
-<h3 id="兼容性矩阵">兼容性矩阵</h3>
-<table><thead><tr>
+<h3 id="兼容性矩阵" class="reveal">兼容性矩阵</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>量化格式</th>
 <th>vLLM 支持</th>
 <th>最低 vLLM 版本</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>FP8_DYNAMIC</td>
 <td>✅</td>
@@ -336,10 +338,14 @@ llm = LLM(
 <td>✅</td>
 <td>v0.8.0+</td>
 </tr>
-</tbody></table>
-<h2 id="评估方法">评估方法</h2>
-<h3 id="perplexity-评估">Perplexity 评估</h3>
-<pre><code class="language-python">
+</tbody></table></div>
+<div class="section reveal" id="评估方法">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">评估方法</h2>
+</div>
+<h3 id="perplexity-评估" class="reveal">Perplexity 评估</h3>
+<pre data-lang="python"><code>
 from lm_eval import evaluator
 
 # 使用 lm-eval-harness 评估
@@ -351,16 +357,16 @@ results = evaluator.simple_evaluate(
 )
 print(f"Perplexity: {results['results']['wikitext']['word_perplexity']}")
 </code></pre>
-<h3 id="下游任务评估">下游任务评估</h3>
-<pre><code class="language-bash">
+<h3 id="下游任务评估" class="reveal">下游任务评估</h3>
+<pre data-lang="bash"><code>
 # 使用 lm-eval 评估多个基准
 lm_eval --model hf \
     --model_args pretrained=path/to/quantized_model \
     --tasks mmlu,hellaswag,arc_challenge,winogrande \
     --batch_size 1
 </code></pre>
-<h3 id="快速验证">快速验证</h3>
-<pre><code class="language-python">
+<h3 id="快速验证" class="reveal">快速验证</h3>
+<pre data-lang="python"><code>
 # 简单的生成质量验证
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -371,7 +377,11 @@ inputs = tokenizer("The capital of France is", return_tensors="pt").to(model.dev
 outputs = model.generate(**inputs, max_new_tokens=50)
 print(tokenizer.decode(outputs[0]))
 </code></pre>
-<h2 id="最佳实践总结">最佳实践总结</h2>
+<div class="section reveal" id="最佳实践总结">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">最佳实践总结</h2>
+</div>
 <ol>
 <li><strong>从 FP8 开始</strong>：如果精度够用，FP8_DYNAMIC 是最简单最快的方案</li>
 <li><strong>逐步压缩</strong>：从 8-bit 到 4-bit，从 RTN 到 GPTQ，逐步增加复杂度</li>
@@ -382,10 +392,10 @@ print(tokenizer.decode(outputs[0]))
 <li><strong>验证再部署</strong>：量化后必须评估精度，不要盲目信任</li>
 <li><strong>保留原始模型</strong>：量化是不可逆操作，保留原始权重备份</li>
 </ol>
-
-<div class="page-nav"><a href="12-advanced-practice.html"><span><span class="label">上一篇</span>&larr; 12 - 高级实践</span></a><span></span></div>
     </div>
-  </main>
+<div class="page-nav"><a href="12-advanced-practice.html"><span class="nav-label">← 上一篇</span><span class="nav-title">高级实践</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

@@ -7,78 +7,71 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html" class="active">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html" class="active">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 05</span>
+    <h1>AWQ（Activation-Aware Weight Quantization）量化详解</h1>
+    <p class="subtitle">激活感知的通道缩放保护量化精度</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#算法概述">算法概述</a></li>
-          <li><a href="#理论基础">理论基础</a></li>
-          <li><a href="#完整数值示例awq-在一个-3x4-权重矩阵上的操作">完整数值示例：AWQ 在一个 3x4 权重矩阵上的操作</a></li>
-          <li><a href="#模型内部变换的可视化">模型内部变换的可视化</a></li>
-          <li><a href="#mapping-系统">Mapping 系统</a></li>
-          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
-          <li><a href="#使用示例">使用示例</a></li>
-          <li><a href="#参数说明">参数说明</a></li>
-          <li><a href="#awq-vs-smoothquant">AWQ vs SmoothQuant</a></li>
-          <li><a href="#awq-的优缺点">AWQ 的优缺点</a></li>
-          <li><a href="#常见问题">常见问题</a></li>
-        </ol>
-      </div>
-<h1 id="awqactivation-aware-weight-quantization量化详解">AWQ（Activation-Aware Weight Quantization）量化详解</h1>
-<h2 id="算法概述">算法概述</h2>
+<div class="section reveal" id="算法概述">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">算法概述</h2>
+</div>
 <p>AWQ 的核心洞察：在权重矩阵中，仅有约 <strong>1% 的通道</strong>对模型输出至关重要（"显著通道"），而这些通道可以通过<strong>激活统计</strong>来识别。AWQ 通过对这些显著通道进行缩放保护，在量化前降低它们的量化误差。</p>
 <p><strong>关键特性</strong>：AWQ 本身不是量化器——它是一个<strong>变换（Transform）</strong>。它在量化之前修改权重，必须与 <code>QuantizationModifier</code> 或 <code>GPTQModifier</code> 配合使用。</p>
-<h2 id="理论基础">理论基础</h2>
-<h3 id="核心问题">核心问题</h3>
+<div class="section reveal" id="理论基础">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">理论基础</h2>
+</div>
+<h3 id="核心问题" class="reveal">核心问题</h3>
 <p>对于线性层 \(Y = XW^T\)，如果对 \(W\) 直接量化，量化误差为：</p>
-<p><div class="formula-block">\[\Delta Y = X \cdot (W - Q(W))^T\]</div></p>
+<p><div class="formula">\[\Delta Y = X \cdot (W - Q(W))^T\]</div></p>
 <p>其中 \(Q(\cdot)\) 是量化函数。关键洞察：即使某些权重值很小，如果它们对应的输入激活通道很大，量化误差也会被放大。</p>
 <p><strong>详细分析</strong>：考虑输出的第 \(k\) 个元素 \(Y_k = \sum_j X_j \cdot W_{k,j}\)。量化后的误差为：</p>
-<p><div class="formula-block">\[\Delta Y_k = \sum_j X_j \cdot (W_{k,j} - Q(W_{k,j}))\]</div></p>
+<p><div class="formula">\[\Delta Y_k = \sum_j X_j \cdot (W_{k,j} - Q(W_{k,j}))\]</div></p>
 <p>即使 \(W_{k,j} - Q(W_{k,j})\) 对所有 \(j\) 都相同（最坏情况约为 \(s/2\)，其中 \(s\) 是量化 scale），通道 \(j\) 对输出误差的贡献正比于 \(|X_j|\)。因此激活值大的通道产生的量化误差被放大。</p>
-<h3 id="通道重要性">通道重要性</h3>
+<h3 id="通道重要性" class="reveal">通道重要性</h3>
 <p>AWQ 定义通道重要性为激活的平均绝对值：</p>
-<p><div class="formula-block">\[\text{importance}_j = \frac{1}{T} \sum_{t=1}^{T} |X_{t,j}|\]</div></p>
+<p><div class="formula">\[\text{importance}_j = \frac{1}{T} \sum_{t=1}^{T} |X_{t,j}|\]</div></p>
 <p>其中 \(T\) 是 token 数量，\(j\) 是通道索引。重要性高的通道需要保护。</p>
 <p><strong>为什么用平均绝对值而非最大值？</strong> 最大值容易受异常值干扰（一个极大的激活就能使某个通道看起来"重要"），而平均绝对值更稳定地反映通道在正常推理中的行为。</p>
 <p>实际实现中，LLM Compressor 使用的是 per-channel 最大值（<code>x_max</code>）来计算缩放因子：</p>
-<p><div class="formula-block">\[x_{max,j} = \max_t |X_{t,j}|\]</div></p>
+<p><div class="formula">\[x_{max,j} = \max_t |X_{t,j}|\]</div></p>
 <p>这个选择使得缩放因子有明确的物理含义：它正比于该通道激活的动态范围。</p>
-<h3 id="等效缩放变换">等效缩放变换</h3>
+<h3 id="等效缩放变换" class="reveal">等效缩放变换</h3>
 <p>AWQ 的核心操作是对权重施加通道缩放 \(s\)：</p>
-<p><div class="formula-block">\[Y = X \cdot W^T = (X \cdot \text{diag}(s)^{-1}) \cdot (\text{diag}(s) \cdot W)^T\]</div></p>
+<p><div class="formula">\[Y = X \cdot W^T = (X \cdot \text{diag}(s)^{-1}) \cdot (\text{diag}(s) \cdot W)^T\]</div></p>
 <p>对于 smooth_layer（产出激活的层）和 balance_layers（消费激活的层）：</p>
 <ul>
 <li>smooth_layer 的输出除以 \(s\)（或等效地，smooth_layer 的权重除以 \(s\)）</li>
@@ -94,13 +87,13 @@
 <li>如果 smooth_layer 是 LayerNorm：\(\gamma_{new} = \gamma / s\)（修改缩放参数）</li>
 <li>如果 smooth_layer 是 Linear：\(W_{smooth,new}[i,:] = W_{smooth}[i,:] / s\)（修改输出维度的权重）</li>
 </ul>
-<h3 id="grid-search-寻找最优缩放因子">Grid Search 寻找最优缩放因子</h3>
+<h3 id="grid-search-寻找最优缩放因子" class="reveal">Grid Search 寻找最优缩放因子</h3>
 <p>AWQ 通过网格搜索确定最优的 \(\alpha\) 值：</p>
-<p><div class="formula-block">\[s_j = x_{max,j}^{\alpha}\]</div></p>
+<p><div class="formula">\[s_j = x_{max,j}^{\alpha}\]</div></p>
 <p>其中 \(x_{max,j} = \max_t |X_{t,j}|\) 是第 \(j\) 个通道的最大激活值。</p>
 <p>搜索范围：\(\alpha \in \{0, 1/n_{grid}, 2/n_{grid}, ..., 1\}\)（默认 \(n_{grid}=20\)）</p>
 <p>对于每个 \(\alpha\) 值，计算量化后的输出误差：</p>
-<p><div class="formula-block">\[L(\alpha) = ||Q(W \cdot \text{diag}(s)) \cdot \text{diag}(s)^{-1} \cdot X^T - W \cdot X^T||_F^2\]</div></p>
+<p><div class="formula">\[L(\alpha) = ||Q(W \cdot \text{diag}(s)) \cdot \text{diag}(s)^{-1} \cdot X^T - W \cdot X^T||_F^2\]</div></p>
 <p>选择使 \(L(\alpha)\) 最小的 \(\alpha^*\)。</p>
 <p><strong>Grid search 的直觉理解</strong>：</p>
 <ul>
@@ -108,9 +101,9 @@
 <li>\(\alpha = 1\)：\(s = x_{max}\)（完全按激活大小缩放），激活大的通道权重被放大 \(x_{max}\) 倍</li>
 <li>最优 \(\alpha^*\) 通常在 0.3-0.7 之间，平衡"保护重要通道"与"不过度扰动其他通道"</li>
 </ul>
-<h3 id="duo-scaling">Duo-Scaling</h3>
+<h3 id="duo-scaling" class="reveal">Duo-Scaling</h3>
 <p>当 <code>duo_scaling=True</code> 时，缩放因子同时考虑激活和权重：</p>
-<p><div class="formula-block">\[s_j = \frac{x_{max,j}^{\alpha}}{w_{max,j}^{1-\alpha}}\]</div></p>
+<p><div class="formula">\[s_j = \frac{x_{max,j}^{\alpha}}{w_{max,j}^{1-\alpha}}\]</div></p>
 <p>其中 \(w_{max,j} = \max_i |W_{i,j}|\) 是第 \(j\) 列权重的最大绝对值。</p>
 <p><strong>直觉</strong>：</p>
 <ul>
@@ -122,9 +115,9 @@
 <p><strong>为什么要除以 \(w_{max,j}^{1-\alpha}\)？</strong></p>
 <p>考虑量化误差的上界。对于 4-bit 对称量化，scale 为 \(s_{quant} = \max(|W_{:,j}|) / 7\)，量化误差上界为 \(s_{quant} / 2\)。</p>
 <p>对于缩放后的权重 \(W'_{:,j} = s_j \cdot W_{:,j}\)，新的 scale 为：</p>
-<p><div class="formula-block">\[s'_{quant,j} = \frac{\max(|s_j \cdot W_{:,j}|)}{7} = \frac{s_j \cdot w_{max,j}}{7}\]</div></p>
+<p><div class="formula">\[s'_{quant,j} = \frac{\max(|s_j \cdot W_{:,j}|)}{7} = \frac{s_j \cdot w_{max,j}}{7}\]</div></p>
 <p>缩放回原始空间后的等效量化误差为：</p>
-<p><div class="formula-block">\[\text{error}_j = \frac{s'_{quant,j}}{2 \cdot s_j} = \frac{s_j \cdot w_{max,j}}{14 \cdot s_j} = \frac{w_{max,j}}{14}\]</div></p>
+<p><div class="formula">\[\text{error}_j = \frac{s'_{quant,j}}{2 \cdot s_j} = \frac{s_j \cdot w_{max,j}}{14 \cdot s_j} = \frac{w_{max,j}}{14}\]</div></p>
 <p>等等——这说明对于 per-channel 量化，简单的缩放实际上不改变量化误差！但对于 per-group 或 per-tensor 量化，多个通道共享 scale，缩放确实能减小重要通道的相对误差。</p>
 <p>实际上 AWQ 的效果来自：当多个通道共享量化参数时（per-group 量化），放大重要通道等效于让该通道在共享 scale 的计算中占据更大权重，从而使 scale 更适合保护该通道。</p>
 <p><strong>Duo-scaling 的具体效果</strong>：</p>
@@ -134,19 +127,22 @@
 <li>Duo-scaling: \(s_j = 10^{0.5} / 5^{0.5} = 3.16 / 2.24 = 1.41\)（只放大 1.41 倍）</li>
 </ul>
 <p>由于权重本身就大，它在 group 内已经占据了较大的动态范围份额，不需要额外放大太多。</p>
-<h2 id="完整数值示例awq-在一个-3x4-权重矩阵上的操作">完整数值示例：AWQ 在一个 3x4 权重矩阵上的操作</h2>
-<h3 id="设定">设定</h3>
+<div class="section reveal" id="完整数值示例awq-在一个-3x4-权重矩阵上的操作">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">完整数值示例：AWQ 在一个 3x4 权重矩阵上的操作</h2>
+</div>
+<h3 id="设定" class="reveal">设定</h3>
 <p>权重矩阵（3 个输出神经元，4 个输入通道）：</p>
-<p><div class="formula-block">\[W = \begin{pmatrix} 0.8 & -0.1 & 0.5 & 0.3 \\ -0.4 & 0.9 & -0.2 & 0.6 \\ 0.2 & -0.3 & 0.7 & -0.1 \end{pmatrix}\]</div></p>
+<p><div class="formula">\[W = \begin{pmatrix} 0.8 & -0.1 & 0.5 & 0.3 \\ -0.4 & 0.9 & -0.2 & 0.6 \\ 0.2 & -0.3 & 0.7 & -0.1 \end{pmatrix}\]</div></p>
 <p>校准数据的激活统计（8 个 token 的 4 通道激活）：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>Token</th>
 <th>Ch0</th>
 <th>Ch1</th>
 <th>Ch2</th>
 <th>Ch3</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>1</td>
 <td>2.1</td>
@@ -203,14 +199,14 @@
 <td>1.3</td>
 <td>1.0</td>
 </tr>
-</tbody></table>
-<h3 id="步骤-1计算通道最大激活值">步骤 1：计算通道最大激活值</h3>
-<p><div class="formula-block">\[x_{max} = [2.7,\ 0.6,\ 1.8,\ 1.0]\]</div></p>
+</tbody></table></div>
+<h3 id="步骤-1计算通道最大激活值" class="reveal">步骤 1：计算通道最大激活值</h3>
+<p><div class="formula">\[x_{max} = [2.7,\ 0.6,\ 1.8,\ 1.0]\]</div></p>
 <p><strong>观察</strong>：通道 0 的激活最大（2.7），是"最重要"的通道；通道 1 的激活最小（0.6），最不重要。</p>
-<h3 id="步骤-2计算权重最大值per-column">步骤 2：计算权重最大值（per-column）</h3>
-<p><div class="formula-block">\[w_{max} = [\max(|0.8|, |0.4|, |0.2|),\ \max(|0.1|, |0.9|, |0.3|),\ \max(|0.5|, |0.2|, |0.7|),\ \max(|0.3|, |0.6|, |0.1|)]\]</div></p>
-<p><div class="formula-block">\[= [0.8,\ 0.9,\ 0.7,\ 0.6]\]</div></p>
-<h3 id="步骤-3grid-searchduo_scalingtrue-n_grid5-简化演示">步骤 3：Grid Search（duo_scaling=True, n_grid=5 简化演示）</h3>
+<h3 id="步骤-2计算权重最大值per-column" class="reveal">步骤 2：计算权重最大值（per-column）</h3>
+<p><div class="formula">\[w_{max} = [\max(|0.8|, |0.4|, |0.2|),\ \max(|0.1|, |0.9|, |0.3|),\ \max(|0.5|, |0.2|, |0.7|),\ \max(|0.3|, |0.6|, |0.1|)]\]</div></p>
+<p><div class="formula">\[= [0.8,\ 0.9,\ 0.7,\ 0.6]\]</div></p>
+<h3 id="步骤-3grid-searchduo_scalingtrue-n_grid5-简化演示" class="reveal">步骤 3：Grid Search（duo_scaling=True, n_grid=5 简化演示）</h3>
 <p>对 \(\alpha \in \{0.0, 0.2, 0.4, 0.6, 0.8, 1.0\}\) 逐一尝试：</p>
 <p><strong>\(\alpha = 0.0\)</strong>：\(s = x_{max}^0 / w_{max}^1 = [1/0.8, 1/0.9, 1/0.7, 1/0.6] = [1.25, 1.11, 1.43, 1.67]\)</p>
 <p><strong>\(\alpha = 0.4\)</strong>：</p>
@@ -220,7 +216,7 @@
 <li>\(s_2 = 1.8^{0.4} / 0.7^{0.6} = 1.26 / 0.80 = 1.57\)</li>
 <li>\(s_3 = 1.0^{0.4} / 0.6^{0.6} = 1.00 / 0.74 = 1.35\)</li>
 </ul>
-<p><div class="formula-block">\[s = [1.71, 0.86, 1.57, 1.35]\]</div></p>
+<p><div class="formula">\[s = [1.71, 0.86, 1.57, 1.35]\]</div></p>
 <p><strong>\(\alpha = 0.8\)</strong>：</p>
 <ul>
 <li>\(s_0 = 2.7^{0.8} / 0.8^{0.2} = 2.28 / 0.96 = 2.38\)</li>
@@ -228,12 +224,12 @@
 <li>\(s_2 = 1.8^{0.8} / 0.7^{0.2} = 1.59 / 0.93 = 1.71\)</li>
 <li>\(s_3 = 1.0^{0.8} / 0.6^{0.2} = 1.00 / 0.90 = 1.11\)</li>
 </ul>
-<p><div class="formula-block">\[s = [2.38, 0.67, 1.71, 1.11]\]</div></p>
-<h3 id="步骤-4对每个-alpha-计算量化误差">步骤 4：对每个 \(\alpha\) 计算量化误差</h3>
+<p><div class="formula">\[s = [2.38, 0.67, 1.71, 1.11]\]</div></p>
+<h3 id="步骤-4对每个-alpha-计算量化误差" class="reveal">步骤 4：对每个 \(\alpha\) 计算量化误差</h3>
 <p>以 \(\alpha = 0.4\)，\(s = [1.71, 0.86, 1.57, 1.35]\) 为例：</p>
 <p><strong>缩放权重</strong>：\(W' = W \cdot \text{diag}(s)\)</p>
-<p><div class="formula-block">\[W' = \begin{pmatrix} 0.8 \times 1.71 & -0.1 \times 0.86 & 0.5 \times 1.57 & 0.3 \times 1.35 \\ -0.4 \times 1.71 & 0.9 \times 0.86 & -0.2 \times 1.57 & 0.6 \times 1.35 \\ 0.2 \times 1.71 & -0.3 \times 0.86 & 0.7 \times 1.57 & -0.1 \times 1.35 \end{pmatrix}\]</div></p>
-<p><div class="formula-block">\[= \begin{pmatrix} 1.37 & -0.086 & 0.785 & 0.405 \\ -0.684 & 0.774 & -0.314 & 0.810 \\ 0.342 & -0.258 & 1.099 & -0.135 \end{pmatrix}\]</div></p>
+<p><div class="formula">\[W' = \begin{pmatrix} 0.8 \times 1.71 & -0.1 \times 0.86 & 0.5 \times 1.57 & 0.3 \times 1.35 \\ -0.4 \times 1.71 & 0.9 \times 0.86 & -0.2 \times 1.57 & 0.6 \times 1.35 \\ 0.2 \times 1.71 & -0.3 \times 0.86 & 0.7 \times 1.57 & -0.1 \times 1.35 \end{pmatrix}\]</div></p>
+<p><div class="formula">\[= \begin{pmatrix} 1.37 & -0.086 & 0.785 & 0.405 \\ -0.684 & 0.774 & -0.314 & 0.810 \\ 0.342 & -0.258 & 1.099 & -0.135 \end{pmatrix}\]</div></p>
 <p><strong>对 \(W'\) 进行 4-bit 量化</strong>（per-row scale）：</p>
 <ul>
 <li>第 0 行：\(\max = 1.37\)，\(scale = 1.37/7 = 0.196\)</li>
@@ -243,13 +239,12 @@
 <p>量化后 \(Q(W')\)：各元素 round 到整数格点再乘以 scale...</p>
 <p><strong>反缩放</strong>：\(W_{final} = Q(W') \cdot \text{diag}(s)^{-1}\)</p>
 <p><strong>计算误差</strong>：用缓存的激活 \(X\) 计算 \(L = ||W_{final} \cdot X^T - W \cdot X^T||_F^2\)</p>
-<h3 id="步骤-5选择最优-alpha">步骤 5：选择最优 \(\alpha\)</h3>
+<h3 id="步骤-5选择最优-alpha" class="reveal">步骤 5：选择最优 \(\alpha\)</h3>
 <p>假设各 \(\alpha\) 对应的 loss：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>\(\alpha\)</th>
 <th>Loss</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>0.0</td>
 <td>0.0082</td>
@@ -274,7 +269,7 @@
 <td>1.0</td>
 <td>0.0078</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>最优 \(\alpha^<em> = 0.6\)，对应 \(s^</em> = [2.03, 0.76, 1.63, 1.22]\)</p>
 <p><strong>趋势解释</strong>：</p>
 <ul>
@@ -282,7 +277,7 @@
 <li>\(\alpha\) 太大：缩放过于激进，非重要通道被压缩太多，引入新误差</li>
 <li>最优点在中间位置平衡两方面</li>
 </ul>
-<h3 id="步骤-6应用最优缩放">步骤 6：应用最优缩放</h3>
+<h3 id="步骤-6应用最优缩放" class="reveal">步骤 6：应用最优缩放</h3>
 <p><strong>修改 smooth_layer</strong>（如 LayerNorm）：</p>
 <ul>
 <li>如果 smooth_layer 有 weight（\(\gamma\)）：\(\gamma_{new} = \gamma / s^*\)</li>
@@ -292,16 +287,20 @@
 <ul>
 <li>每个 balance_layer 的权重：\(W_{new}[:, j] = s^*_j \cdot W_{old}[:, j]\)</li>
 </ul>
-<h2 id="模型内部变换的可视化">模型内部变换的可视化</h2>
-<h3 id="变换前的数据流">变换前的数据流</h3>
-<pre><code class="language-text">
+<div class="section reveal" id="模型内部变换的可视化">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">模型内部变换的可视化</h2>
+</div>
+<h3 id="变换前的数据流" class="reveal">变换前的数据流</h3>
+<pre data-lang="text"><code>
 Input → LayerNorm(γ, β) → Activation A → [q_proj(W_q), k_proj(W_k), v_proj(W_v)]
                                     ↓
                           A 的第 j 通道 = γ_j * normalized + β_j
                           q = A @ W_q^T
 </code></pre>
-<h3 id="变换后的数据流">变换后的数据流</h3>
-<pre><code class="language-text">
+<h3 id="变换后的数据流" class="reveal">变换后的数据流</h3>
+<pre data-lang="text"><code>
 Input → LayerNorm(γ/s, β) → Activation A' = A/s → [q_proj(s·W_q), k_proj(s·W_k), v_proj(s·W_v)]
                                           ↓
                           A' 的第 j 通道 = (γ_j/s_j) * normalized + β_j/s_j（被缩小）
@@ -313,7 +312,7 @@ Input → LayerNorm(γ/s, β) → Activation A' = A/s → [q_proj(s·W_q), k_pro
 <li>通道 1（\(s_1 = 0.76\)）：权重被缩小 0.76 倍，量化相对误差增大</li>
 <li>净效果：重要通道（激活大的）的误差降低带来的收益 > 不重要通道误差增大的损失</li>
 </ul>
-<h3 id="为什么-awq-对-per-group-量化特别有效">为什么 AWQ 对 per-group 量化特别有效？</h3>
+<h3 id="为什么-awq-对-per-group-量化特别有效" class="reveal">为什么 AWQ 对 per-group 量化特别有效？</h3>
 <p>在 per-group 量化中，128 个通道共享一个 scale。假设一个 group 中：</p>
 <ul>
 <li>通道 A：权重小（0.1），但激活大（5.0）</li>
@@ -321,10 +320,14 @@ Input → LayerNorm(γ/s, β) → Activation A' = A/s → [q_proj(s·W_q), k_pro
 </ul>
 <p>不做 AWQ：group scale 由通道 B 的权重决定（\(s = 2.0/7 = 0.286\)），通道 A 的量化精度为 \(0.286/2 = 0.143\)，相对于其 0.1 的权重，误差高达 143%！</p>
 <p>做 AWQ 后（假设 \(s_A = 3.0\)）：通道 A 权重变为 0.3，group 中的动态范围更平衡，通道 A 获得更合理的量化精度。</p>
-<h2 id="mapping-系统">Mapping 系统</h2>
+<div class="section reveal" id="mapping-系统">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">Mapping 系统</h2>
+</div>
 <p>AWQ 需要知道哪些层之间存在激活传递关系：</p>
-<h3 id="mapping-结构">Mapping 结构</h3>
-<pre><code class="language-python">
+<h3 id="mapping-结构" class="reveal">Mapping 结构</h3>
+<pre data-lang="python"><code>
 AWQMapping(
     smooth_layer="model.layers.0.self_attn_layer_norm",   # 产出激活的层
     balance_layers=["model.layers.0.q_proj",              # 消费激活的层
@@ -335,9 +338,9 @@ AWQMapping(
 <p><strong>smooth_layer</strong>：其输出将被缩放（除以 \(s\)），通常是 LayerNorm</p>
 <p><strong>balance_layers</strong>：其输入来自 smooth_layer，权重将被缩放（乘以 \(s\)）</p>
 <p><strong>为什么 smooth_layer 通常选择 LayerNorm？</strong> 因为 LayerNorm 的缩放参数 \(\gamma\) 天然对应通道维度，除以 \(s\) 就相当于修改 \(\gamma\)，不需要额外操作。如果 smooth_layer 是 Linear 层，则需要修改其输出维度的权重行向量，更加复杂。</p>
-<h3 id="自动推理-mapping">自动推理 Mapping</h3>
+<h3 id="自动推理-mapping" class="reveal">自动推理 Mapping</h3>
 <p>如果用户不指定 <code>mappings</code>，AWQ 会自动从模型架构推理：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # src/llmcompressor/modifiers/transform/awq/dynamic_mappings.py
 def get_layer_mappings_from_model(model):
     """基于模型结构自动推理 smooth_layer ↔ balance_layers 映射"""
@@ -346,18 +349,22 @@ def get_layer_mappings_from_model(model):
     # post_attention_layernorm → gate_proj, up_proj
     # (对于某些架构) up_proj → down_proj
 </code></pre>
-<h3 id="正则表达式匹配">正则表达式匹配</h3>
+<h3 id="正则表达式匹配" class="reveal">正则表达式匹配</h3>
 <p>支持使用正则表达式批量指定映射：</p>
-<pre><code class="language-yaml">
+<pre data-lang="yaml"><code>
 mappings:
   - smooth_layer: "re:.*input_layernorm"
     balance_layers: ["re:.*q_proj", "re:.*k_proj", "re:.*v_proj"]
   - smooth_layer: "re:.*post_attention_layernorm"
     balance_layers: ["re:.*gate_proj", "re:.*up_proj"]
 </code></pre>
-<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
-<h3 id="awqmodifier-生命周期">AWQModifier 生命周期</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="在-llm-compressor-中的实现">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">在 LLM Compressor 中的实现</h2>
+</div>
+<h3 id="awqmodifier-生命周期" class="reveal">AWQModifier 生命周期</h3>
+<pre data-lang="python"><code>
 class AWQModifier(Modifier):
     mappings: list[AWQMapping] | None = None
     offload_device: torch.device | None = None
@@ -384,8 +391,8 @@ class AWQModifier(Modifier):
             for mapping in self._resolved_mappings:
                 self._apply_smoothing(mapping)
 </code></pre>
-<h3 id="grid-search-核心逻辑">Grid Search 核心逻辑</h3>
-<pre><code class="language-python">
+<h3 id="grid-search-核心逻辑" class="reveal">Grid Search 核心逻辑</h3>
+<pre data-lang="python"><code>
 def _apply_smoothing(self, mapping):
     """对一个 mapping 执行 AWQ grid search"""
     
@@ -424,8 +431,8 @@ def _apply_smoothing(self, mapping):
     for layer in balance_layers:
         layer.weight *= best_scales.unsqueeze(0)  # balance_layer 输入乘以 s
 </code></pre>
-<h3 id="grid-search-实现细节">Grid Search 实现细节</h3>
-<pre><code class="language-python">
+<h3 id="grid-search-实现细节" class="reveal">Grid Search 实现细节</h3>
+<pre data-lang="python"><code>
 def _grid_search_single_mapping(self, mapping, x_max, w_max, cached_acts):
     """单个 mapping 的 grid search 详细实现"""
     
@@ -468,8 +475,8 @@ def _grid_search_single_mapping(self, mapping, x_max, w_max, cached_acts):
     
     return best_scales
 </code></pre>
-<h3 id="duo_scalingboth-的实现">duo_scaling="both" 的实现</h3>
-<pre><code class="language-python">
+<h3 id="duo_scalingboth-的实现" class="reveal">duo_scaling="both" 的实现</h3>
+<pre data-lang="python"><code>
 if self.duo_scaling == "both":
     # 前半部分用 duo_scaling
     best_loss_duo = float('inf')
@@ -496,8 +503,8 @@ if self.duo_scaling == "both":
     # 取两者中更好的
     best_scales = best_scales_duo if best_loss_duo &lt; best_loss_plain else best_scales_plain
 </code></pre>
-<h3 id="激活缓存与内存优化">激活缓存与内存优化</h3>
-<pre><code class="language-python">
+<h3 id="激活缓存与内存优化" class="reveal">激活缓存与内存优化</h3>
+<pre data-lang="python"><code>
 def _setup_activation_cache_hooks(self):
     """注册钩子缓存激活值"""
     for mapping in self._resolved_mappings:
@@ -509,8 +516,8 @@ def _setup_activation_cache_hooks(self):
 # 内存优化：可以将缓存的激活卸载到 CPU
 # offload_device=torch.device("cpu")
 </code></pre>
-<h3 id="应用缩放的具体操作">应用缩放的具体操作</h3>
-<pre><code class="language-python">
+<h3 id="应用缩放的具体操作" class="reveal">应用缩放的具体操作</h3>
+<pre data-lang="python"><code>
 def _apply_scales_to_model(self, mapping, best_scales):
     """将找到的最优缩放因子应用到模型参数"""
     
@@ -539,9 +546,13 @@ def _apply_scales_to_model(self, mapping, best_scales):
         # 输入维度乘以 s
         layer.weight.data *= s.unsqueeze(0)  # [C_out, C_in] * [1, C_in]
 </code></pre>
-<h2 id="使用示例">使用示例</h2>
-<h3 id="示例-1awq-w4a16-量化">示例 1：AWQ + W4A16 量化</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="使用示例">
+<div class="section-header">
+<div class="section-number">7</div>
+<h2 class="section-title">使用示例</h2>
+</div>
+<h3 id="示例-1awq-w4a16-量化" class="reveal">示例 1：AWQ + W4A16 量化</h3>
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from llmcompressor import oneshot
@@ -569,8 +580,8 @@ oneshot(
 
 model.save_pretrained("Llama-3-8B-W4A16-AWQ")
 </code></pre>
-<h3 id="示例-2自定义-mapping">示例 2：自定义 Mapping</h3>
-<pre><code class="language-python">
+<h3 id="示例-2自定义-mapping" class="reveal">示例 2：自定义 Mapping</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.transform.awq.mappings import AWQMapping
 
 recipe = [
@@ -591,8 +602,8 @@ recipe = [
     QuantizationModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
 ]
 </code></pre>
-<h3 id="示例-3moe-模型-awq">示例 3：MoE 模型 AWQ</h3>
-<pre><code class="language-python">
+<h3 id="示例-3moe-模型-awq" class="reveal">示例 3：MoE 模型 AWQ</h3>
+<pre data-lang="python"><code>
 # MoE 模型自动启用 CPU offload
 recipe = [
     AWQModifier(
@@ -613,8 +624,8 @@ oneshot(
     num_calibration_samples=512,
 )
 </code></pre>
-<h3 id="示例-4awq-gptq-组合">示例 4：AWQ + GPTQ 组合</h3>
-<pre><code class="language-python">
+<h3 id="示例-4awq-gptq-组合" class="reveal">示例 4：AWQ + GPTQ 组合</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.gptq import GPTQModifier
 
 # AWQ 做通道缩放预处理，GPTQ 做精细量化
@@ -623,13 +634,16 @@ recipe = [
     GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
 ]
 </code></pre>
-<h2 id="参数说明">参数说明</h2>
-<table><thead><tr>
+<div class="section reveal" id="参数说明">
+<div class="section-header">
+<div class="section-number">8</div>
+<h2 class="section-title">参数说明</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>参数</th>
 <th>默认值</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>mappings</code></td>
 <td>None（自动推理）</td>
@@ -650,16 +664,15 @@ recipe = [
 <td>None（MoE 自动 CPU）</td>
 <td>激活缓存卸载设备</td>
 </tr>
-</tbody></table>
-<h3 id="参数调优详解">参数调优详解</h3>
+</tbody></table></div>
+<h3 id="参数调优详解" class="reveal">参数调优详解</h3>
 <p><strong>n_grid 的选择</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>n_grid</th>
 <th>Grid 点数</th>
 <th>搜索精度</th>
 <th>耗时</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>10</td>
 <td>11 个 \(\alpha\)</td>
@@ -678,15 +691,14 @@ recipe = [
 <td>精细搜索，边际收益小</td>
 <td>慢</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>实际经验：从 20 增加到 50 通常只提升 0.01-0.02 perplexity，不值得额外耗时。</p>
 <p><strong>duo_scaling 的三种模式</strong>：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>值</th>
 <th>行为</th>
 <th>适用场景</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>False</code></td>
 <td>仅用 \(x_{max}^\alpha\)</td>
@@ -702,14 +714,17 @@ recipe = [
 <td>两种都试，取更好的</td>
 <td>不确定哪种更好时</td>
 </tr>
-</tbody></table>
-<h2 id="awq-vs-smoothquant">AWQ vs SmoothQuant</h2>
-<table><thead><tr>
+</tbody></table></div>
+<div class="section reveal" id="awq-vs-smoothquant">
+<div class="section-header">
+<div class="section-number">9</div>
+<h2 class="section-title">AWQ vs SmoothQuant</h2>
+</div>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th></th>
 <th>AWQ</th>
 <th>SmoothQuant</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>目标场景</td>
 <td>W4A16 仅权重量化</td>
@@ -735,13 +750,17 @@ recipe = [
 <td>+ QuantizationModifier/GPTQModifier</td>
 <td>+ GPTQ/QuantizationModifier</td>
 </tr>
-</tbody></table>
-<h3 id="深入对比为什么-awq-用-grid-search-而-smoothquant-用公式">深入对比：为什么 AWQ 用 Grid Search 而 SmoothQuant 用公式？</h3>
+</tbody></table></div>
+<h3 id="深入对比为什么-awq-用-grid-search-而-smoothquant-用公式" class="reveal">深入对比：为什么 AWQ 用 Grid Search 而 SmoothQuant 用公式？</h3>
 <p><strong>SmoothQuant</strong> 的缩放因子有闭式解：</p>
-<p><div class="formula-block">\[s_j = \frac{x_{max,j}^\alpha}{w_{max,j}^{1-\alpha}}\]</div></p>
+<p><div class="formula">\[s_j = \frac{x_{max,j}^\alpha}{w_{max,j}^{1-\alpha}}\]</div></p>
 <p>这里 \(\alpha\) 是全局超参数（通常 0.5），因为 SmoothQuant 需要同时量化权重和激活，公式直接平衡两者的量化难度。</p>
 <p><strong>AWQ</strong> 不量化激活，仅通过缩放改善权重量化。由于不同层、不同 group 的最优 \(\alpha\) 不同，需要通过 grid search 对每个 mapping 找到局部最优。AWQ 的 grid search 成本不高（每次只是一个矩阵乘法 + 量化模拟），但收益显著。</p>
-<h2 id="awq-的优缺点">AWQ 的优缺点</h2>
+<div class="section reveal" id="awq-的优缺点">
+<div class="section-header">
+<div class="section-number">10</div>
+<h2 class="section-title">AWQ 的优缺点</h2>
+</div>
 <p><strong>优点</strong>：</p>
 <ul>
 <li>精度高（通过保护关键通道）</li>
@@ -758,16 +777,20 @@ recipe = [
 <li>仅支持 per-channel 及以上粒度（不支持 per-tensor）</li>
 <li>对 per-tensor 量化效果有限（因为缩放不改变 per-tensor 的量化误差）</li>
 </ul>
-<h2 id="常见问题">常见问题</h2>
-<h3 id="q-awq-应该在-gptq-之前还是之后">Q: AWQ 应该在 GPTQ 之前还是之后？</h3>
+<div class="section reveal" id="常见问题">
+<div class="section-header">
+<div class="section-number">11</div>
+<h2 class="section-title">常见问题</h2>
+</div>
+<h3 id="q-awq-应该在-gptq-之前还是之后" class="reveal">Q: AWQ 应该在 GPTQ 之前还是之后？</h3>
 <p><strong>答</strong>：AWQ 必须在量化之前执行。它修改权重的数值分布，使后续的量化过程产生更小的误差。正确顺序：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 recipe = [
     AWQModifier(...),        # 先做变换
     GPTQModifier(...),       # 再做量化
 ]
 </code></pre>
-<h3 id="q-为什么有时-awq-反而降低精度">Q: 为什么有时 AWQ 反而降低精度？</h3>
+<h3 id="q-为什么有时-awq-反而降低精度" class="reveal">Q: 为什么有时 AWQ 反而降低精度？</h3>
 <p>可能原因：</p>
 <ol>
 <li><strong>模型本身权重分布已经很好</strong>：缩放引入的数值扰动大于收益</li>
@@ -775,7 +798,7 @@ recipe = [
 <li><strong>per-tensor 量化</strong>：如前所述，AWQ 对 per-tensor 量化效果有限</li>
 <li><strong>LayerNorm 后的通道分布已经均匀</strong>：LayerNorm 本身就做了归一化，进一步缩放的收益有限</li>
 </ol>
-<h3 id="q-n_grid20-的计算开销是多少">Q: n_grid=20 的计算开销是多少？</h3>
+<h3 id="q-n_grid20-的计算开销是多少" class="reveal">Q: n_grid=20 的计算开销是多少？</h3>
 <p>对于一个 mapping（假设 balance_layers 总共 12288 输出通道，4096 输入通道，缓存 512 tokens）：</p>
 <ul>
 <li>每个 grid 点：矩阵乘法 \([12288, 4096] \times [4096, 512]\) + 量化模拟</li>
@@ -783,10 +806,10 @@ recipe = [
 <li>总耗时：约 0.5-2 秒/mapping（在 A100 上）</li>
 <li>整个模型（32 层 × 2 mappings/层）：约 1-2 分钟</li>
 </ul>
-
-<div class="page-nav"><a href="04-gptq.html"><span><span class="label">上一篇</span>&larr; 04 - GPTQ 量化详解</span></a><a href="06-autoround.html"><span><span class="label">下一篇</span>06 - AutoRound 量化 &rarr;</span></a></div>
     </div>
-  </main>
+<div class="page-nav"><a href="04-gptq.html"><span class="nav-label">← 上一篇</span><span class="nav-title">GPTQ</span></a><a href="06-autoround.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">AutoRound</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

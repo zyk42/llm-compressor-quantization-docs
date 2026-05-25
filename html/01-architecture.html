@@ -7,57 +7,48 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html" class="active">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html" class="active">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 01</span>
+    <h1>LLM Compressor 项目架构深度解析</h1>
+    <p class="subtitle">深入理解 Modifier、Recipe、Pipeline、Observer 系统</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#整体架构">整体架构</a></li>
-          <li><a href="#1-modifier修改器系统">1. Modifier（修改器）系统</a></li>
-          <li><a href="#2-recipe配方系统">2. Recipe（配方）系统</a></li>
-          <li><a href="#3-pipeline管线系统">3. Pipeline（管线）系统</a></li>
-          <li><a href="#4-observer观测器系统">4. Observer（观测器）系统</a></li>
-          <li><a href="#5-oneshot-完整调用链">5. oneshot() 完整调用链</a></li>
-          <li><a href="#6-量化状态管理">6. 量化状态管理</a></li>
-          <li><a href="#7-分布式支持ddp">7. 分布式支持（DDP）</a></li>
-          <li><a href="#8-输出格式">8. 输出格式</a></li>
-        </ol>
-      </div>
-<h1 id="llm-compressor-项目架构深度解析">LLM Compressor 项目架构深度解析</h1>
-<h2 id="整体架构">整体架构</h2>
+<div class="section reveal" id="整体架构">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">整体架构</h2>
+</div>
 <p>LLM Compressor 采用模块化的分层架构，核心由五大系统组成：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌─────────────────────────────────────────────────────────┐
 │                    用户 API 层                            │
 │              oneshot() / model_free_ptq()                │
@@ -78,10 +69,14 @@
 │              量化参数序列化 &amp; vLLM 兼容输出               │
 └─────────────────────────────────────────────────────────┘
 </code></pre>
-<h2 id="1-modifier修改器系统">1. Modifier（修改器）系统</h2>
+<div class="section reveal" id="1-modifier修改器系统">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">1. Modifier（修改器）系统</h2>
+</div>
 <p>Modifier 是 LLM Compressor 的核心抽象，每个量化算法对应一个 Modifier 实现。所有 Modifier 共享统一的生命周期：</p>
-<h3 id="生命周期">生命周期</h3>
-<pre><code class="language-text">
+<h3 id="生命周期" class="reveal">生命周期</h3>
+<pre data-lang="text"><code>
 on_initialize()          # 初始化：加载配置，准备量化参数
        ↓
 on_start()               # 启动：注册校准钩子（hooks）
@@ -94,8 +89,8 @@ on_end()                 # 结束：冻结量化参数，移除钩子
        ↓
 on_finalize()            # 清理：释放临时数据
 </code></pre>
-<h3 id="modifier-继承体系">Modifier 继承体系</h3>
-<pre><code class="language-text">
+<h3 id="modifier-继承体系" class="reveal">Modifier 继承体系</h3>
+<pre data-lang="text"><code>
 Modifier (基类)
 ├── QuantizationModifier     # RTN/标准 PTQ
 ├── GPTQModifier             # GPTQ 量化
@@ -108,9 +103,9 @@ Modifier (基类)
 ├── SparseGPTModifier        # SparseGPT 剪枝
 └── WandaPruningModifier     # Wanda 剪枝
 </code></pre>
-<h3 id="关键机制hook-系统">关键机制：Hook 系统</h3>
+<h3 id="关键机制hook-系统" class="reveal">关键机制：Hook 系统</h3>
 <p>Modifier 通过 PyTorch 的 forward hook 机制介入模型推理：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # 典型的校准钩子注册
 def on_start(self, state, ...):
     for module in target_modules:
@@ -118,10 +113,14 @@ def on_start(self, state, ...):
         self.register_hook(module, calibrate_input_hook, "forward_pre")
         self.register_hook(module, calibrate_output_hook, "forward")
 </code></pre>
-<h2 id="2-recipe配方系统">2. Recipe（配方）系统</h2>
+<div class="section reveal" id="2-recipe配方系统">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">2. Recipe（配方）系统</h2>
+</div>
 <p>Recipe 定义了"对模型做什么压缩操作"。支持三种配置方式：</p>
-<h3 id="python-对象最常用">Python 对象（最常用）</h3>
-<pre><code class="language-python">
+<h3 id="python-对象最常用" class="reveal">Python 对象（最常用）</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.quantization import QuantizationModifier
 from llmcompressor.modifiers.gptq import GPTQModifier
 
@@ -134,8 +133,8 @@ recipe = [
     GPTQModifier(targets="Linear", scheme="W8A8", block_size=128),
 ]
 </code></pre>
-<h3 id="yaml-配方">YAML 配方</h3>
-<pre><code class="language-yaml">
+<h3 id="yaml-配方" class="reveal">YAML 配方</h3>
+<pre data-lang="yaml"><code>
 quantization_stage:
   quant_modifiers:
     QuantizationModifier:
@@ -143,16 +142,20 @@ quantization_stage:
       scheme: "FP8_DYNAMIC"
       ignore: ["lm_head"]
 </code></pre>
-<h3 id="从-hugging-face-hub-加载">从 Hugging Face Hub 加载</h3>
-<pre><code class="language-python">
+<h3 id="从-hugging-face-hub-加载" class="reveal">从 Hugging Face Hub 加载</h3>
+<pre data-lang="python"><code>
 from llmcompressor.recipe import Recipe
 recipe = Recipe.create_from("neuralmagic/Llama-3-8B-FP8-recipe")
 </code></pre>
-<h2 id="3-pipeline管线系统">3. Pipeline（管线）系统</h2>
+<div class="section reveal" id="3-pipeline管线系统">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">3. Pipeline（管线）系统</h2>
+</div>
 <p>Pipeline 控制校准数据如何流经模型。根据 Modifier 类型和模型大小自动选择：</p>
-<h3 id="sequential-pipeline默认">Sequential Pipeline（默认）</h3>
+<h3 id="sequential-pipeline默认" class="reveal">Sequential Pipeline（默认）</h3>
 <p>逐层处理模型，每次只在 GPU 上加载一层：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 Layer 0 → 校准 → 量化 → 卸载到 CPU
 Layer 1 → 校准 → 量化 → 卸载到 CPU
 ...
@@ -160,26 +163,26 @@ Layer N → 校准 → 量化 → 卸载到 CPU
 </code></pre>
 <p><strong>优势</strong>：单卡即可处理 70B+ 模型</p>
 <p><strong>配置</strong>：<code>sequential_targets=["LlamaDecoderLayer"]</code></p>
-<h3 id="independent-pipeline">Independent Pipeline</h3>
+<h3 id="independent-pipeline" class="reveal">Independent Pipeline</h3>
 <p>每个 Modifier 独立运行自己的前向传播：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 Modifier 1: 完整前向传播 → 收集统计 → 应用变换
 Modifier 2: 完整前向传播 → 收集统计 → 应用变换
 </code></pre>
 <p><strong>适用</strong>：多个 Modifier 需要独立校准数据时</p>
-<h3 id="datafree-pipeline">DataFree Pipeline</h3>
+<h3 id="datafree-pipeline" class="reveal">DataFree Pipeline</h3>
 <p>无需校准数据，直接初始化量化参数：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 初始化 → 应用量化配置 → 完成
 </code></pre>
 <p><strong>适用</strong>：FP8 RTN 等不需要校准的方案</p>
-<h3 id="basic-pipeline">Basic Pipeline</h3>
+<h3 id="basic-pipeline" class="reveal">Basic Pipeline</h3>
 <p>所有 Modifier 共享同一次前向传播：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 单次前向传播 → 所有 Modifier 同时收集统计
 </code></pre>
-<h3 id="自动选择逻辑">自动选择逻辑</h3>
-<pre><code class="language-python">
+<h3 id="自动选择逻辑" class="reveal">自动选择逻辑</h3>
+<pre data-lang="python"><code>
 # 简化的管线选择逻辑
 if all modifiers are data-free:
     pipeline = DataFreePipeline
@@ -188,15 +191,18 @@ elif modifiers need independent calibration:
 else:
     pipeline = SequentialPipeline  # 默认
 </code></pre>
-<h2 id="4-observer观测器系统">4. Observer（观测器）系统</h2>
+<div class="section reveal" id="4-observer观测器系统">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">4. Observer（观测器）系统</h2>
+</div>
 <p>Observer 负责在校准过程中收集激活统计量，用于计算量化参数（scale、zero_point）：</p>
-<h3 id="可用-observer">可用 Observer</h3>
-<table><thead><tr>
+<h3 id="可用-observer" class="reveal">可用 Observer</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>Observer</th>
 <th>策略</th>
 <th>适用场景</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>memoryless_minmax</code></td>
 <td>仅使用当前 batch 的 min/max</td>
@@ -222,9 +228,9 @@ else:
 <td>重要性加权 MSE</td>
 <td>最高精度，需 IMatrix</td>
 </tr>
-</tbody></table>
-<h3 id="observer-工作流">Observer 工作流</h3>
-<pre><code class="language-python">
+</tbody></table></div>
+<h3 id="observer-工作流" class="reveal">Observer 工作流</h3>
+<pre data-lang="python"><code>
 # 1. 初始化 Observer（on_initialize 阶段）
 observer = MinMaxObserver(quantization_args)
 
@@ -234,8 +240,8 @@ observer.forward(input_tensor)  # 更新内部 min_val/max_val
 # 3. 计算量化参数（on_event 阶段）
 scale, zero_point = observer.get_qparams()
 </code></pre>
-<h3 id="配置方式">配置方式</h3>
-<pre><code class="language-python">
+<h3 id="配置方式" class="reveal">配置方式</h3>
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="W4A16",
@@ -246,9 +252,13 @@ recipe = QuantizationModifier(
     }
 )
 </code></pre>
-<h2 id="5-oneshot-完整调用链">5. oneshot() 完整调用链</h2>
+<div class="section reveal" id="5-oneshot-完整调用链">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">5. oneshot() 完整调用链</h2>
+</div>
 <p><code>oneshot()</code> 是最常用的入口函数，其完整执行流程如下：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 oneshot(model, recipe, dataset, ...)
 │
 ├── 1. 预处理（pre_process）
@@ -278,9 +288,13 @@ oneshot(model, recipe, dataset, ...)
 │
 └── 返回量化后的模型
 </code></pre>
-<h2 id="6-量化状态管理">6. 量化状态管理</h2>
+<div class="section reveal" id="6-量化状态管理">
+<div class="section-header">
+<div class="section-number">7</div>
+<h2 class="section-title">6. 量化状态管理</h2>
+</div>
 <p>模型中的每个量化模块维护三种状态：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 INITIALIZED  →  CALIBRATION  →  FROZEN
 (配置已应用)    (正在校准)      (参数冻结)
 </code></pre>
@@ -289,9 +303,13 @@ INITIALIZED  →  CALIBRATION  →  FROZEN
 <li><strong>CALIBRATION</strong>：Observer 处于活跃状态，每次前向传播更新统计</li>
 <li><strong>FROZEN</strong>：Observer 已移除，scale/zero_point 已固定</li>
 </ul>
-<h2 id="7-分布式支持ddp">7. 分布式支持（DDP）</h2>
+<div class="section reveal" id="7-分布式支持ddp">
+<div class="section-header">
+<div class="section-number">8</div>
+<h2 class="section-title">7. 分布式支持（DDP）</h2>
+</div>
 <p>LLM Compressor 支持通过 <code>torchrun</code> 启动多 GPU 分布式量化：</p>
-<pre><code class="language-bash">
+<pre data-lang="bash"><code>
 torchrun --nproc_per_node=4 quantize_script.py
 </code></pre>
 <p>DDP 同步机制：</p>
@@ -300,9 +318,13 @@ torchrun --nproc_per_node=4 quantize_script.py
 <li><strong>激活统计</strong>（Observer）：通过 <code>dist.all_reduce</code> 同步 min/max 或移动平均值</li>
 <li><strong>权重更新</strong>：源 rank 计算量化参数后广播到其他 rank</li>
 </ul>
-<h2 id="8-输出格式">8. 输出格式</h2>
+<div class="section reveal" id="8-输出格式">
+<div class="section-header">
+<div class="section-number">9</div>
+<h2 class="section-title">8. 输出格式</h2>
+</div>
 <p>量化模型以 <code>compressed-tensors</code> 格式保存，兼容 vLLM 直接加载：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 output_dir/
 ├── config.json                 # 模型配置 + 量化元数据
 ├── model-00001-of-00004.safetensors  # 压缩权重
@@ -318,10 +340,10 @@ output_dir/
 <li><code>weight_global_scale</code>：全局缩放（TENSOR_GROUP 策略）</li>
 <li><code>weight_g_idx</code>：分组索引（GPTQ grouped）</li>
 </ul>
-
-<div class="page-nav"><a href="index.html"><span><span class="label">上一篇</span>&larr; 00 - 总览与快速入门</span></a><a href="02-quantization-fundamentals.html"><span><span class="label">下一篇</span>02 - 量化基础理论 &rarr;</span></a></div>
     </div>
-  </main>
+<div class="page-nav"><a href="index.html"><span class="nav-label">← 上一篇</span><span class="nav-title">总览</span></a><a href="02-quantization-fundamentals.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">基础理论</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>

@@ -7,65 +7,57 @@
   <link rel="stylesheet" href="assets/style.css">
   <script>
     MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
-      options: { skipHtmlTags: ['code', 'pre'] }
+      tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+      options: { skipHtmlTags: ['code','pre'] }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
 </head>
 <body>
-  <button class="menu-toggle">&#9776;</button>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <h2>LLM Compressor</h2>
-      <p>量化方法详解文档</p>
+  <nav class="topnav">
+    <div class="topnav-brand">LLM Compressor Docs</div>
+    <div class="topnav-links">
+      <a href="index.html">00 总览</a>
+        <a href="01-architecture.html">01 架构</a>
+        <a href="02-quantization-fundamentals.html">02 基础理论</a>
+        <a href="03-rtn-quantization.html">03 RTN</a>
+        <a href="04-gptq.html">04 GPTQ</a>
+        <a href="05-awq.html">05 AWQ</a>
+        <a href="06-autoround.html">06 AutoRound</a>
+        <a href="07-smoothquant.html">07 SmoothQuant</a>
+        <a href="08-rotation-quantization.html">08 旋转量化</a>
+        <a href="09-imatrix.html">09 IMatrix</a>
+        <a href="10-quantization-formats.html">10 格式</a>
+        <a href="11-kv-cache-quantization.html" class="active">11 KV Cache</a>
+        <a href="12-advanced-practice.html">12 高级实践</a>
+        <a href="13-troubleshooting.html">13 排查</a>
     </div>
-    <nav>
-      <a href="index.html">00 - 总览与快速入门</a>
-      <a href="01-architecture.html">01 - 项目架构解析</a>
-      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
-      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
-      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
-      <a href="05-awq.html">05 - AWQ 量化详解</a>
-      <a href="06-autoround.html">06 - AutoRound 量化</a>
-      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
-      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
-      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
-      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
-      <a href="11-kv-cache-quantization.html" class="active">11 - KV Cache 量化</a>
-      <a href="12-advanced-practice.html">12 - 高级实践</a>
-      <a href="13-troubleshooting.html">13 - 问题排查</a>
-    </nav>
-  </aside>
+  </nav>
 
-  <main class="main">
+  <header class="hero">
+    <span class="chapter-badge">Chapter 11</span>
+    <h1>KV Cache 量化</h1>
+    <p class="subtitle">推理时 KV 缓存 FP8 量化，序列长度翻倍</p>
+  </header>
+
+  <div class="container">
     <div class="content">
-      <div class="toc">
-        <div class="toc-title">目录</div>
-        <ol>
-          <li><a href="#背景kv-cache-的内存问题">背景：KV Cache 的内存问题</a></li>
-          <li><a href="#量化原理">量化原理</a></li>
-          <li><a href="#在-llm-compressor-中的配置">在 LLM Compressor 中的配置</a></li>
-          <li><a href="#使用示例">使用示例</a></li>
-          <li><a href="#vllm-推理配置">vLLM 推理配置</a></li>
-          <li><a href="#精度影响">精度影响</a></li>
-          <li><a href="#最佳实践">最佳实践</a></li>
-        </ol>
-      </div>
-<h1 id="kv-cache-量化">KV Cache 量化</h1>
-<h2 id="背景kv-cache-的内存问题">背景：KV Cache 的内存问题</h2>
+<div class="section reveal" id="背景kv-cache-的内存问题">
+<div class="section-header">
+<div class="section-number">1</div>
+<h2 class="section-title">背景：KV Cache 的内存问题</h2>
+</div>
 <p>在 LLM 推理中，KV Cache 存储每个 token 的 Key 和 Value 状态，随着序列长度增长线性增加。对于长序列场景，KV Cache 可能成为主要内存瓶颈。</p>
-<h3 id="内存占用分析">内存占用分析</h3>
+<h3 id="内存占用分析" class="reveal">内存占用分析</h3>
 <p>单层 KV Cache 的内存：</p>
-<p><div class="formula-block">\[\text{Memory} = 2 \times \text{batch} \times \text{seq\_len} \times \text{num\_heads} \times \text{head\_dim} \times \text{bytes\_per\_element}\]</div></p>
+<p><div class="formula">\[\text{Memory} = 2 \times \text{batch} \times \text{seq\_len} \times \text{num\_heads} \times \text{head\_dim} \times \text{bytes\_per\_element}\]</div></p>
 <p>以 Llama-3-70B 为例（80 层，64 头，head_dim=128）：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>序列长度</th>
 <th>FP16 KV Cache</th>
 <th>FP8 KV Cache</th>
 <th>节省</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>2K</td>
 <td>2.5 GB</td>
@@ -90,17 +82,17 @@
 <td>80 GB</td>
 <td>50%</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>KV Cache 量化到 FP8 可以将缓存占用减半，等效于将可服务的序列长度翻倍。</p>
-<h3 id="内存节省计算公式">内存节省计算公式</h3>
+<h3 id="内存节省计算公式" class="reveal">内存节省计算公式</h3>
 <p><strong>通用 KV Cache 内存公式</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 KV_Memory (bytes) = 2 × num_layers × batch_size × seq_len × num_kv_heads × head_dim × bytes_per_elem
                     ↑                                        ↑
                     K和V各一份                                GQA 时 kv_heads &lt; q_heads
 </code></pre>
 <p><strong>实际计算示例（Llama-3-70B）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 模型参数:
   num_layers = 80
   num_kv_heads = 8  (GQA, 8 KV heads shared by 64 Q heads)
@@ -118,7 +110,7 @@ FP8 (1 byte/elem):
 节省 = 2.5 - 1.25 = 1.25 GB per batch per 8K tokens
 </code></pre>
 <p><strong>多 batch 场景下的收益放大</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 场景: Llama-3-70B, 128K 上下文, 32 并发请求 (continuous batching)
 FP16: 2 × 80 × 32 × 131072 × 8 × 128 × 2 = 2.62 TB  (不可能!)
 FP8:  2 × 80 × 32 × 131072 × 8 × 128 × 1 = 1.31 TB  (仍然太大)
@@ -131,7 +123,7 @@ FP8:  2 × 80 × 32 × 131072 × 8 × 128 × 1 = 1.31 TB  (仍然太大)
     → 或 sqrt(2)× 的两者组合提升
 </code></pre>
 <p><strong>vLLM 中 KV Cache 占用估算</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 vLLM 启动时显示:
   # GPU blocks: 2048, # CPU blocks: 512
   
@@ -142,18 +134,22 @@ vLLM 启动时显示:
 总 KV Cache 容量 = 2048 blocks × 1 MB = 2 GB
 可缓存的总 token 数 = 2048 × 16 = 32,768 tokens
 </code></pre>
-<h2 id="量化原理">量化原理</h2>
-<h3 id="目标模块">目标模块</h3>
+<div class="section reveal" id="量化原理">
+<div class="section-header">
+<div class="section-number">2</div>
+<h2 class="section-title">量化原理</h2>
+</div>
+<h3 id="目标模块" class="reveal">目标模块</h3>
 <p>KV Cache 量化作用于 Attention 层的 Key 和 Value 输出：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 q_proj → Q states（Query，每次推理重新计算）
 k_proj → K states → 存入 KV Cache ← 量化目标
 v_proj → V states → 存入 KV Cache ← 量化目标
 </code></pre>
 <p>在 LLM Compressor 中，KV Cache 量化通过对 <code>k_proj</code> 和 <code>v_proj</code> 的<strong>输出</strong>施加量化实现（注意：量化的是这些投影层的输出激活，即将要存入缓存的 K 和 V 向量）。</p>
-<h3 id="完整数据流详解">完整数据流详解</h3>
+<h3 id="完整数据流详解" class="reveal">完整数据流详解</h3>
 <p>以下是 KV Cache 量化在推理时的完整数据流：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Attention Layer 数据流                          │
 ├──────────────────────────────────────────────────────────────────┤
@@ -193,7 +189,7 @@ v_proj → V states → 存入 KV Cache ← 量化目标
 └──────────────────────────────────────────────────────────────────┘
 </code></pre>
 <p><strong>逐步执行追踪（单 token 生成，decode 阶段）</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 时刻 t: 生成第 t 个 token
 
 1. 输入: x_t = embedding[token_{t-1}] 经过前面层的输出
@@ -233,7 +229,7 @@ v_proj → V states → 存入 KV Cache ← 量化目标
    output = attn_weights @ V_all
 </code></pre>
 <p><strong>vLLM 中的实际实现路径</strong>：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 # vLLM PagedAttention with FP8 KV Cache (简化伪代码)
 class PagedAttentionWithFP8KVCache:
     def forward(self, query, key, value, kv_cache, attn_metadata):
@@ -253,7 +249,7 @@ class PagedAttentionWithFP8KVCache:
         )
         return output
 </code></pre>
-<h3 id="量化策略">量化策略</h3>
+<h3 id="量化策略" class="reveal">量化策略</h3>
 <p><strong>Per-Tensor（默认）</strong>：</p>
 <ul>
 <li>整个 KV Cache 共享一个 scale</li>
@@ -267,7 +263,7 @@ class PagedAttentionWithFP8KVCache:
 <li>vLLM 支持 per-head FP8 KV Cache</li>
 </ul>
 <p><strong>Per-Head 策略详解：为什么不同头需要不同 scale？</strong></p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 观察: 在多头注意力中，不同头学习了不同的"角色":
   - 某些头关注局部位置信息 → K 值范围较小 (如 [-0.5, 0.5])
   - 某些头关注全局语义 → K 值范围较大 (如 [-3.0, 3.0])
@@ -289,7 +285,7 @@ class PagedAttentionWithFP8KVCache:
      代价: 存储 num_kv_heads 个 scale 而非 1 个 (极小开销)
 </code></pre>
 <p><strong>实际精度差异度量</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 实验数据 (Llama-3-8B, 8K context):
   Head 0: K 值 std=0.15, max=0.62
   Head 1: K 值 std=0.43, max=2.87
@@ -300,13 +296,12 @@ class PagedAttentionWithFP8KVCache:
   Per-tensor MSE: 1.2e-4
   Per-head MSE:   3.8e-5  (3.2× 更精确)
 </code></pre>
-<h3 id="与权重量化的区别">与权重量化的区别</h3>
-<table><thead><tr>
+<h3 id="与权重量化的区别" class="reveal">与权重量化的区别</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th></th>
 <th>权重量化</th>
 <th>KV Cache 量化</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>量化对象</td>
 <td>模型权重（静态）</td>
@@ -337,10 +332,10 @@ class PagedAttentionWithFP8KVCache:
 <td>无（推理时已是低精度）</td>
 <td>有（量化/反量化每次都执行）</td>
 </tr>
-</tbody></table>
-<h3 id="kv_cache_scheme-与权重量化的交互">kv_cache_scheme 与权重量化的交互</h3>
+</tbody></table></div>
+<h3 id="kv_cache_scheme-与权重量化的交互" class="reveal">kv_cache_scheme 与权重量化的交互</h3>
 <p>KV Cache 量化与权重量化是<strong>正交</strong>的两个维度，可以独立组合：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 ┌─────────────────────────────────────────────────────────┐
 │                   组合矩阵                               │
 ├──────────────────┬──────────┬───────────┬───────────────┤
@@ -353,7 +348,7 @@ class PagedAttentionWithFP8KVCache:
 └──────────────────┴──────────┴───────────┴───────────────┘
 </code></pre>
 <p><strong>组合时的数据流</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 以 W4A16 + FP8 KV Cache 为例:
 
 hidden_states (FP16)
@@ -383,10 +378,14 @@ hidden_states (FP16)
 <ol>
 <li><strong>校准数据的作用</strong>：当使用静态 KV cache scale 时，校准数据用于观察 k_proj/v_proj 输出的分布范围，确定合适的 scale</li>
 </ol>
-<h2 id="在-llm-compressor-中的配置">在 LLM Compressor 中的配置</h2>
-<h3 id="kv_cache_scheme-参数">kv_cache_scheme 参数</h3>
+<div class="section reveal" id="在-llm-compressor-中的配置">
+<div class="section-header">
+<div class="section-number">3</div>
+<h2 class="section-title">在 LLM Compressor 中的配置</h2>
+</div>
+<h3 id="kv_cache_scheme-参数" class="reveal">kv_cache_scheme 参数</h3>
 <p>KV Cache 量化通过 <code>QuantizationModifier</code> 的 <code>kv_cache_scheme</code> 参数配置：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from compressed_tensors.quantization import QuantizationArgs
 
 recipe = QuantizationModifier(
@@ -401,13 +400,12 @@ recipe = QuantizationModifier(
     ),
 )
 </code></pre>
-<h3 id="配置选项">配置选项</h3>
-<table><thead><tr>
+<h3 id="配置选项" class="reveal">配置选项</h3>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>参数</th>
 <th>可选值</th>
 <th>说明</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td><code>num_bits</code></td>
 <td>8</td>
@@ -433,10 +431,10 @@ recipe = QuantizationModifier(
 <td>True / False</td>
 <td>是否动态计算 scale</td>
 </tr>
-</tbody></table>
-<h3 id="配置如何映射到模型配置文件">配置如何映射到模型配置文件</h3>
+</tbody></table></div>
+<h3 id="配置如何映射到模型配置文件" class="reveal">配置如何映射到模型配置文件</h3>
 <p>LLM Compressor 在保存模型时，将 KV Cache 量化信息写入 <code>config.json</code> 的 <code>quantization_config</code> 字段：</p>
-<pre><code class="language-json">
+<pre data-lang="json"><code>
 {
   "quantization_config": {
     "quant_method": "compressed-tensors",
@@ -458,9 +456,13 @@ recipe = QuantizationModifier(
 }
 </code></pre>
 <p>vLLM 在加载模型时读取此配置，自动设置 KV Cache 的 dtype 和 scale。</p>
-<h2 id="使用示例">使用示例</h2>
-<h3 id="示例-1fp8-kv-cacheper-tensor">示例 1：FP8 KV Cache（Per-Tensor）</h3>
-<pre><code class="language-python">
+<div class="section reveal" id="使用示例">
+<div class="section-header">
+<div class="section-number">4</div>
+<h2 class="section-title">使用示例</h2>
+</div>
+<h3 id="示例-1fp8-kv-cacheper-tensor" class="reveal">示例 1：FP8 KV Cache（Per-Tensor）</h3>
+<pre data-lang="python"><code>
 from transformers import AutoModelForCausalLM
 from datasets import load_dataset
 from llmcompressor import oneshot
@@ -493,8 +495,8 @@ oneshot(
 
 model.save_pretrained("Llama-3-8B-FP8-KV")
 </code></pre>
-<h3 id="示例-2per-head-kv-cache-量化">示例 2：Per-Head KV Cache 量化</h3>
-<pre><code class="language-python">
+<h3 id="示例-2per-head-kv-cache-量化" class="reveal">示例 2：Per-Head KV Cache 量化</h3>
+<pre data-lang="python"><code>
 recipe = QuantizationModifier(
     targets="Linear",
     scheme="FP8_DYNAMIC",
@@ -507,8 +509,8 @@ recipe = QuantizationModifier(
     ),
 )
 </code></pre>
-<h3 id="示例-3权重量化-kv-cache-量化组合">示例 3：权重量化 + KV Cache 量化组合</h3>
-<pre><code class="language-python">
+<h3 id="示例-3权重量化-kv-cache-量化组合" class="reveal">示例 3：权重量化 + KV Cache 量化组合</h3>
+<pre data-lang="python"><code>
 from llmcompressor.modifiers.gptq import GPTQModifier
 
 # GPTQ W4A16 + FP8 KV Cache
@@ -526,8 +528,8 @@ recipe = GPTQModifier(
 
 oneshot(model=model, recipe=recipe, dataset=dataset, num_calibration_samples=512)
 </code></pre>
-<h3 id="示例-4yaml-配方格式">示例 4：YAML 配方格式</h3>
-<pre><code class="language-yaml">
+<h3 id="示例-4yaml-配方格式" class="reveal">示例 4：YAML 配方格式</h3>
+<pre data-lang="yaml"><code>
 quantization_stage:
   quant_modifiers:
     QuantizationModifier:
@@ -540,9 +542,13 @@ quantization_stage:
         strategy: tensor
         symmetric: true
 </code></pre>
-<h2 id="vllm-推理配置">vLLM 推理配置</h2>
+<div class="section reveal" id="vllm-推理配置">
+<div class="section-header">
+<div class="section-number">5</div>
+<h2 class="section-title">vLLM 推理配置</h2>
+</div>
 <p>量化后的模型在 vLLM 中使用 KV Cache 量化：</p>
-<pre><code class="language-python">
+<pre data-lang="python"><code>
 from vllm import LLM
 
 # 加载带 KV Cache 量化的模型
@@ -554,7 +560,7 @@ llm = LLM(
 </code></pre>
 <p><strong>注意</strong>：vLLM 会自动从模型的 <code>config.json</code> 中读取 KV Cache 量化参数（scale 等）。</p>
 <p><strong>vLLM 内部处理流程</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 模型加载时:
   1. 读取 config.json 中的 kv_cache_scheme
   2. 分配 FP8 格式的 KV Cache block pool
@@ -569,14 +575,17 @@ llm = LLM(
      - 内核内部进行 FP8→FP16 转换 + attention 计算（融合操作）
      - 无需显式反量化到临时 FP16 buffer
 </code></pre>
-<h2 id="精度影响">精度影响</h2>
+<div class="section reveal" id="精度影响">
+<div class="section-header">
+<div class="section-number">6</div>
+<h2 class="section-title">精度影响</h2>
+</div>
 <p>KV Cache 量化对模型精度的影响通常很小：</p>
-<table><thead><tr>
+<div class="table-wrapper reveal"><table><thead><tr>
 <th>方案</th>
 <th>Perplexity 增加</th>
 <th>下游任务影响</th>
-</tr></thead>
-<tbody>
+</tr></thead><tbody>
 <tr>
 <td>FP8 per-tensor</td>
 <td>+0.01 ~ +0.05</td>
@@ -592,7 +601,7 @@ llm = LLM(
 <td>+0.05 ~ +0.1</td>
 <td>极小影响</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p><strong>原因</strong>：</p>
 <ol>
 <li>KV Cache 中的值通常范围有限（softmax 后的注意力权重限制了 V 的使用方式）</li>
@@ -600,7 +609,7 @@ llm = LLM(
 <li>量化误差在多头注意力中被平均</li>
 </ol>
 <p><strong>精度分析深入</strong>：</p>
-<pre><code class="language-text">
+<pre data-lang="text"><code>
 为什么 KV Cache 量化精度损失比权重量化小?
 
 1. 权重量化: 每次 GEMM 都使用量化权重，误差在层间累积
@@ -617,7 +626,11 @@ llm = LLM(
    经过 softmax 归一化后的 attention weight 误差 ≈ 0.01%
    多头 (32-128 头) 平均后误差 ≈ 0.01% / sqrt(num_heads)
 </code></pre>
-<h2 id="最佳实践">最佳实践</h2>
+<div class="section reveal" id="最佳实践">
+<div class="section-header">
+<div class="section-number">7</div>
+<h2 class="section-title">最佳实践</h2>
+</div>
 <ol>
 <li><strong>首选 FP8 per-tensor</strong>：精度损失极小，推理开销最低</li>
 <li><strong>长序列场景必备</strong>：序列长度 > 8K 时，KV Cache 量化收益明显</li>
@@ -627,10 +640,10 @@ llm = LLM(
 <li><strong>GQA 模型收益计算</strong>：注意 GQA 模型的 kv_heads 远少于 q_heads，因此 KV Cache 本身就较小，量化节省的绝对内存量也相应减少</li>
 <li><strong>监控长序列精度</strong>：KV Cache 量化的精度影响随序列长度增加而略微增大（更多历史 token 累积量化误差），超长序列（>64K）时建议使用 per-head 策略</li>
 </ol>
-
-<div class="page-nav"><a href="10-quantization-formats.html"><span><span class="label">上一篇</span>&larr; 10 - 量化格式详解</span></a><a href="12-advanced-practice.html"><span><span class="label">下一篇</span>12 - 高级实践 &rarr;</span></a></div>
     </div>
-  </main>
+<div class="page-nav"><a href="10-quantization-formats.html"><span class="nav-label">← 上一篇</span><span class="nav-title">格式</span></a><a href="12-advanced-practice.html" style="text-align:right"><span class="nav-label">下一篇 →</span><span class="nav-title">高级实践</span></a></div>
+  </div>
+
   <script src="assets/main.js"></script>
 </body>
 </html>
