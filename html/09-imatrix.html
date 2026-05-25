@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IMatrix 重要性加权校准详解 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html" class="active">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#算法概述">算法概述</a></li>
+          <li><a href="#理论基础">理论基础</a></li>
+          <li><a href="#两阶段工作流">两阶段工作流</a></li>
+          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
+          <li><a href="#使用示例">使用示例</a></li>
+          <li><a href="#参数说明">参数说明</a></li>
+          <li><a href="#imatrix-的优缺点">IMatrix 的优缺点</a></li>
+          <li><a href="#适用场景">适用场景</a></li>
+        </ol>
+      </div>
+<h1 id="imatrix-重要性加权校准详解">IMatrix 重要性加权校准详解</h1>
+<h2 id="算法概述">算法概述</h2>
+<p>IMatrix（Importance Matrix）是一种校准增强技术，通过收集输入激活的<strong>二阶矩统计</strong>来为每个权重通道分配重要性权重。传统的 MSE Observer 对所有通道等权处理，而 IMatrix 让频繁被大激活值"激活"的通道获得更大的量化保护。</p>
+<p><strong>核心思想</strong>：不是所有通道同等重要——激活值经常很大的通道对输出影响更大，量化时应该更精确地保护它们。</p>
+<h2 id="理论基础">理论基础</h2>
+<h3 id="通道重要性定义">通道重要性定义</h3>
+<p>IMatrix 定义第 \(j\) 个输入通道的重要性为激活的二阶矩：</p>
+<p><div class="formula-block">\[\text{importance}_j = E[x_j^2] = \frac{1}{N} \sum_{n=1}^{N} x_{n,j}^2\]</div></p>
+<p>其中 \(x_{n,j}\) 是第 \(n\) 个样本在第 \(j\) 个通道的激活值。</p>
+<h3 id="为什么用二阶矩">为什么用二阶矩？</h3>
+<p>对于线性层 \(y = Wx\)，权重 \(w_j\) 的量化误差 \(\Delta w_j\) 对输出的影响为：</p>
+<p><div class="formula-block">\[\Delta y = \sum_j \Delta w_j \cdot x_j\]</div></p>
+<p>输出误差的期望：</p>
+<p><div class="formula-block">\[E[\Delta y^2] = \sum_j (\Delta w_j)^2 \cdot E[x_j^2] = \sum_j (\Delta w_j)^2 \cdot \text{importance}_j\]</div></p>
+<p>因此，\(E[x_j^2]\) 大的通道，其量化误差会被更大地放大。</p>
+<h3 id="加权-mse-目标">加权 MSE 目标</h3>
+<p>传统 MSE Observer 的目标：</p>
+<p><div class="formula-block">\[\min_{s, z} \sum_j (w_j - \hat{w}_j)^2\]</div></p>
+<p>IMatrix 加权 MSE Observer 的目标：</p>
+<p><div class="formula-block">\[\min_{s, z} \sum_j \text{importance}_j \cdot (w_j - \hat{w}_j)^2\]</div></p>
+<p>这使得高重要性通道获得更小的量化误差。</p>
+<h3 id="grid-search-中的重要性加权">Grid Search 中的重要性加权</h3>
+<p>IMatrix MSE Observer 的 grid search 过程：</p>
+<pre><code class="language-text">
+for each candidate (min_val, max_val):
+    scale = (max_val - min_val) / (qmax - qmin)
+    w_q = quantize(w, scale, zero_point)
+    # 加权 MSE
+    loss = sum(importance * (w - w_q)^2)
+    
+choose (min_val, max_val) with minimum weighted loss
+</code></pre>
+<h2 id="两阶段工作流">两阶段工作流</h2>
+<p>IMatrix 的使用分为两个阶段：</p>
+<h3 id="阶段一imatrixgatherer-收集统计">阶段一：IMatrixGatherer 收集统计</h3>
+<pre><code class="language-text">
+校准数据 → 前向传播 → 收集每层的 E[x²] → 存储在模块上
+</code></pre>
+<h3 id="阶段二量化器使用-imatrix_mse-observer">阶段二：量化器使用 imatrix_mse Observer</h3>
+<pre><code class="language-text">
+量化器读取 E[x²] → 加权 MSE 优化 → 得到更优的 scale/zp
+</code></pre>
+<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
+<h3 id="imatrixgatherer">IMatrixGatherer</h3>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/transform/imatrix/base.py
+
+class IMatrixGatherer(Modifier):
+    """
+    收集 E[x²] 统计量，存储在目标模块上供后续 Observer 使用。
+    本身不执行量化。
+    """
+    targets: str | list = "Linear"
+    ignore: list = []
+    
+    def on_start(self, state):
+        # 为每个目标模块注册输入捕获钩子
+        for module in target_modules:
+            module._imatrix_sum = torch.zeros(in_features)
+            module._imatrix_count = 0
+            self.register_hook(module, self._accumulate_hook, "forward_pre")
+    
+    def _accumulate_hook(self, module, inp):
+        """累积 x² 统计"""
+        x = inp[0]
+        # x shape: [batch, seq_len, hidden_dim]
+        x_flat = x.reshape(-1, x.shape[-1])
+        module._imatrix_sum += (x_flat ** 2).sum(dim=0)
+        module._imatrix_count += x_flat.shape[0]
+    
+    def on_event(self, state, event):
+        if event.type_ == SEQUENTIAL_EPOCH_END:
+            # DDP 同步：汇总各 rank 的统计
+            for module in target_modules:
+                dist.all_reduce(module._imatrix_sum, op=dist.ReduceOp.SUM)
+                dist.all_reduce(module._imatrix_count, op=dist.ReduceOp.SUM)
+</code></pre>
+<h3 id="imatrix-mse-observer">IMatrix MSE Observer</h3>
+<pre><code class="language-python">
+# src/llmcompressor/observers/imatrix.py
+
+class IMatrixMSEObserver(Observer):
+    """使用 imatrix 重要性加权的 MSE Observer"""
+    
+    def get_qparams(self):
+        # 获取 imatrix 统计
+        imatrix = self.module._imatrix_sum / self.module._imatrix_count
+        
+        # 加权 MSE grid search
+        best_loss = float('inf')
+        for shrink in linspace(1-maxshrink, 1, grid):
+            # 候选范围
+            min_val = self.min_vals * shrink
+            max_val = self.max_vals * shrink
+            scale = (max_val - min_val) / (qmax - qmin)
+            
+            # 量化
+            w_q = fake_quantize(weight, scale, zero_point)
+            
+            # 加权 MSE
+            loss = (imatrix * (weight - w_q) ** 2).sum()
+            
+            if loss &lt; best_loss:
+                best_loss = loss
+                best_scale = scale
+        
+        return {"scale": best_scale, "zero_point": best_zp, ...}
+</code></pre>
+<h3 id="统计量传递机制">统计量传递机制</h3>
+<p>IMatrixGatherer 将统计量直接存储在模块的属性上：</p>
+<pre><code class="language-python">
+# IMatrixGatherer 存储
+module._imatrix_sum = accumulated_sum      # Σ x²
+module._imatrix_count = sample_count       # N
+
+# IMatrixMSEObserver 读取
+importance = module._imatrix_sum / module._imatrix_count  # E[x²]
+</code></pre>
+<p>这种设计使得两个 Modifier 可以独立配置但通过模块属性通信。</p>
+<h2 id="使用示例">使用示例</h2>
+<h3 id="示例-1imatrix-rtn-w4a16">示例 1：IMatrix + RTN W4A16</h3>
+<pre><code class="language-python">
+from llmcompressor import oneshot
+from llmcompressor.modifiers.transform.imatrix import IMatrixGatherer
+from llmcompressor.modifiers.quantization import QuantizationModifier
+
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype="auto")
+dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+
+recipe = [
+    # 第一步：收集 IMatrix 统计
+    IMatrixGatherer(
+        targets="Linear",
+        ignore=["lm_head"],
+    ),
+    # 第二步：使用 imatrix_mse observer 进行量化
+    QuantizationModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+        observer={"weights": "imatrix_mse"},  # 指定加权 MSE observer
+    ),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+    max_seq_length=2048,
+)
+</code></pre>
+<h3 id="示例-2imatrix-gptq">示例 2：IMatrix + GPTQ</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+recipe = [
+    IMatrixGatherer(targets="Linear", ignore=["lm_head"]),
+    GPTQModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+        observer={"weights": "imatrix_mse"},
+    ),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+)
+</code></pre>
+<h3 id="示例-3imatrix-fp8">示例 3：IMatrix + FP8</h3>
+<pre><code class="language-python">
+recipe = [
+    IMatrixGatherer(targets="Linear", ignore=["lm_head"]),
+    QuantizationModifier(
+        targets="Linear",
+        scheme="FP8_DYNAMIC",
+        ignore=["lm_head"],
+        observer={"weights": "imatrix_mse"},
+    ),
+]
+</code></pre>
+<h2 id="参数说明">参数说明</h2>
+<h3 id="imatrixgatherer-参数">IMatrixGatherer 参数</h3>
+<table><thead><tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>targets</code></td>
+<td>"Linear"</td>
+<td>收集统计的目标层</td>
+</tr>
+<tr>
+<td><code>ignore</code></td>
+<td>[]</td>
+<td>跳过的层</td>
+</tr>
+</tbody></table>
+<h3 id="imatrix-mse-observer-参数">IMatrix MSE Observer 参数</h3>
+<p>Observer 的参数通过量化配置传递：</p>
+<table><thead><tr>
+<th>参数</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>maxshrink</code></td>
+<td>Grid search 的最大收缩比例</td>
+</tr>
+<tr>
+<td><code>grid</code></td>
+<td>Grid search 的网格点数</td>
+</tr>
+<tr>
+<td><code>patience</code></td>
+<td>连续无改善后停止搜索</td>
+</tr>
+<tr>
+<td><code>norm</code></td>
+<td>误差范数类型（L2 等）</td>
+</tr>
+</tbody></table>
+<h2 id="imatrix-的优缺点">IMatrix 的优缺点</h2>
+<p><strong>优点</strong>：</p>
+<ul>
+<li>显著提升低比特量化精度（尤其 4-bit）</li>
+<li>计算简单（仅需一次前向传播收集统计）</li>
+<li>与任何量化器兼容</li>
+<li>理论基础清晰（加权最优化）</li>
+</ul>
+<p><strong>缺点</strong>：</p>
+<ul>
+<li>需要额外的校准步骤（两阶段流程）</li>
+<li>增加少量内存开销（存储 E[x²]）</li>
+<li>对 FP8 等高精度格式收益有限</li>
+<li>需要有代表性的校准数据</li>
+</ul>
+<h2 id="适用场景">适用场景</h2>
+<table><thead><tr>
+<th>场景</th>
+<th>推荐度</th>
+<th>原因</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>W4A16 INT4 量化</td>
+<td>★★★★★</td>
+<td>4-bit 下通道重要性差异大</td>
+</tr>
+<tr>
+<td>W4A16 + GPTQ</td>
+<td>★★★★</td>
+<td>为 GPTQ 提供更好的初始 scale</td>
+</tr>
+<tr>
+<td>W8A8 量化</td>
+<td>★★★</td>
+<td>8-bit 精度足够，收益有限</td>
+</tr>
+<tr>
+<td>FP8 量化</td>
+<td>★★</td>
+<td>FP8 精度很高，几乎无需额外优化</td>
+</tr>
+<tr>
+<td>模型有明显离群通道</td>
+<td>★★★★★</td>
+<td>正是 IMatrix 设计解决的问题</td>
+</tr>
+</tbody></table>
+
+<div class="page-nav"><a href="08-rotation-quantization.html"><span><span class="label">上一篇</span>&larr; 08 - 旋转量化 (SpinQuant/QuIP)</span></a><a href="10-quantization-formats.html"><span><span class="label">下一篇</span>10 - 量化格式详解 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

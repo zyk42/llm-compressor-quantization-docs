@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>量化基础理论 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html" class="active">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#什么是量化">什么是量化</a></li>
+          <li><a href="#均匀量化uniform-quantization">均匀量化（Uniform Quantization）</a></li>
+          <li><a href="#量化粒度granularity">量化粒度（Granularity）</a></li>
+          <li><a href="#量化误差分析">量化误差分析</a></li>
+          <li><a href="#weight-only-vs-weight-activation-量化">Weight-Only vs Weight-Activation 量化</a></li>
+          <li><a href="#浮点量化-vs-整数量化">浮点量化 vs 整数量化</a></li>
+          <li><a href="#校准calibration">校准（Calibration）</a></li>
+          <li><a href="#量化对推理的影响">量化对推理的影响</a></li>
+        </ol>
+      </div>
+<h1 id="量化基础理论">量化基础理论</h1>
+<h2 id="什么是量化">什么是量化</h2>
+<p>量化（Quantization）是将高精度浮点数（如 FP16/BF16）映射到低精度表示（如 INT4/INT8/FP8）的过程。对于 LLM，量化的核心目标是：</p>
+<ol>
+<li><strong>减少模型体积</strong>：4-bit 量化可将模型大小压缩至原来的 1/4</li>
+<li><strong>降低显存占用</strong>：更小的数据类型意味着更少的 GPU 内存需求</li>
+<li><strong>加速推理</strong>：低精度算术运算（如 INT8 矩阵乘法）通常更快</li>
+</ol>
+<h2 id="均匀量化uniform-quantization">均匀量化（Uniform Quantization）</h2>
+<h3 id="基本公式">基本公式</h3>
+<p>均匀量化将连续浮点值映射到等间距的离散级别：</p>
+<p><strong>量化（Quantize）</strong>：</p>
+<p><div class="formula-block">\[q = \text{clamp}\left(\text{round}\left(\frac{x}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
+<p><strong>反量化（Dequantize）</strong>：</p>
+<p><div class="formula-block">\[\hat{x} = s \cdot (q - z)\]</div></p>
+<p>其中：</p>
+<ul>
+<li>\(x\)：原始浮点权重/激活值</li>
+<li>\(q\)：量化后的整数值</li>
+<li>\(s\)：缩放因子（scale）</li>
+<li>\(z\)：零点（zero point）</li>
+<li>\(q_{min}, q_{max}\)：量化范围（如 INT8 为 [-128, 127]）</li>
+</ul>
+<h3 id="对称量化-vs-非对称量化">对称量化 vs 非对称量化</h3>
+<p><strong>对称量化（Symmetric）</strong>：</p>
+<p><div class="formula-block">\[s = \frac{\max(|x|)}{q_{max}}\]</div></p>
+<p><div class="formula-block">\[z = 0\]</div></p>
+<ul>
+<li>零点固定为 0，简化计算</li>
+<li>适合权重（通常近似对称分布）</li>
+<li>范围：\([-q_{max} \cdot s,\ q_{max} \cdot s]\)</li>
+</ul>
+<p><strong>非对称量化（Asymmetric）</strong>：</p>
+<p><div class="formula-block">\[s = \frac{x_{max} - x_{min}}{q_{max} - q_{min}}\]</div></p>
+<p><div class="formula-block">\[z = q_{min} - \text{round}\left(\frac{x_{min}}{s}\right)\]</div></p>
+<ul>
+<li>更精确地覆盖实际值域</li>
+<li>适合激活（可能存在偏移，如 ReLU 后全为正值）</li>
+<li>范围：\([x_{min},\ x_{max}]\)</li>
+</ul>
+<h2 id="量化粒度granularity">量化粒度（Granularity）</h2>
+<p>量化粒度决定了"多少个元素共享一组量化参数（scale, zero_point）"：</p>
+<h3 id="per-tensor张量级">Per-Tensor（张量级）</h3>
+<p>整个权重矩阵共享一个 scale：</p>
+<p><div class="formula-block">\[s = \frac{\max(|W|)}{q_{max}}\]</div></p>
+<ul>
+<li>最简单，参数开销最小</li>
+<li>精度最低（一个异常值会影响整个矩阵）</li>
+</ul>
+<h3 id="per-channel通道级">Per-Channel（通道级）</h3>
+<p>每个输出通道（矩阵的每一行）独立计算 scale：</p>
+<p><div class="formula-block">\[s_i = \frac{\max(|W[i,:]|)}{q_{max}}\]</div></p>
+<ul>
+<li>精度显著优于 per-tensor</li>
+<li>对 LLM 权重矩阵是标准选择</li>
+<li>额外存储：\(C_{out}\) 个 scale 值</li>
+</ul>
+<h3 id="per-group分组级">Per-Group（分组级）</h3>
+<p>将通道内连续的 \(g\) 个元素分为一组，每组独立量化：</p>
+<p><div class="formula-block">\[s_{i,j} = \frac{\max(|W[i, j \cdot g : (j+1) \cdot g]|)}{q_{max}}\]</div></p>
+<ul>
+<li>典型 group_size：32、64、128</li>
+<li>精度高于 per-channel，是 4-bit 量化的标准配置</li>
+<li>额外存储：\(C_{out} \times \lceil C_{in} / g \rceil\) 个 scale 值</li>
+</ul>
+<h3 id="per-token令牌级">Per-Token（令牌级）</h3>
+<p>对激活按每个 token 独立量化：</p>
+<p><div class="formula-block">\[s_t = \frac{\max(|X[t,:]|)}{q_{max}}\]</div></p>
+<ul>
+<li>用于动态激活量化</li>
+<li>每个 token 的激活分布差异大，per-token 显著优于 per-tensor</li>
+<li>在推理时动态计算，不需要提前校准</li>
+</ul>
+<h3 id="tensor_group张量分组级">TENSOR_GROUP（张量分组级）</h3>
+<p>Per-group 基础上增加 global_scale：</p>
+<p><div class="formula-block">\[\text{local\_scale}_{i,j} = \frac{\max(|W[i, j \cdot g : (j+1) \cdot g]|)}{\text{global\_scale} \cdot q_{max}}\]</div></p>
+<ul>
+<li>用于 NVFP4、FP8_BLOCK 等格式</li>
+<li>global_scale 为所有 local_scale 的缩放因子</li>
+<li>两级缩放结构可以用低精度存储 local_scale</li>
+</ul>
+<h2 id="量化误差分析">量化误差分析</h2>
+<h3 id="舍入误差">舍入误差</h3>
+<p>量化的核心误差来源于 <code>round()</code> 操作：</p>
+<p><div class="formula-block">\[\epsilon_{round} = x - \hat{x} = x - s \cdot \text{round}(x/s)\]</div></p>
+<p>对于均匀分布的权重，期望均方误差为：</p>
+<p><div class="formula-block">\[E[\epsilon^2] = \frac{s^2}{12}\]</div></p>
+<p>即 scale 越大（量化越粗糙），误差越大。</p>
+<h3 id="截断误差">截断误差</h3>
+<p>超出量化范围的值被截断（clamp），造成额外误差：</p>
+<p><div class="formula-block">\[\epsilon_{clip} = x - s \cdot q_{max}, \quad \text{当}\ x > s \cdot q_{max}\]</div></p>
+<h3 id="对模型输出的影响">对模型输出的影响</h3>
+<p>单层量化误差通过模型前向传播累积。对 Transformer 的线性层：</p>
+<p><div class="formula-block">\[Y = X \cdot W^T\]</div></p>
+<p>权重量化误差传播为：</p>
+<p><div class="formula-block">\[\Delta Y = X \cdot \Delta W^T\]</div></p>
+<p>其中 \(\Delta W = W - \hat{W}\) 是权重量化误差。关键洞察：<strong>输入激活 \(X\) 的大小会放大权重误差</strong> — 这就是为什么 AWQ 和 SmoothQuant 关注激活分布。</p>
+<h2 id="weight-only-vs-weight-activation-量化">Weight-Only vs Weight-Activation 量化</h2>
+<h3 id="weight-only-量化w4a16w8a16">Weight-Only 量化（W4A16、W8A16）</h3>
+<ul>
+<li>仅量化权重，激活保持 FP16/BF16</li>
+<li>主要收益：减少模型体积和显存占用</li>
+<li>推理时需要反量化权重再做矩阵乘法</li>
+<li>精度损失较小，适合高压缩比（4-bit）</li>
+<li>典型方案：GPTQ W4A16、AWQ W4A16</li>
+</ul>
+<h3 id="weight-activation-量化w8a8w4a4">Weight-Activation 量化（W8A8、W4A4）</h3>
+<ul>
+<li>同时量化权重和激活</li>
+<li>主要收益：可以使用低精度矩阵乘法核（如 INT8 GEMM、FP8 GEMM）</li>
+<li>推理速度提升显著（利用硬件加速）</li>
+<li>需要更精心的校准（激活分布更复杂）</li>
+<li>典型方案：SmoothQuant W8A8、FP8_DYNAMIC</li>
+</ul>
+<h2 id="浮点量化-vs-整数量化">浮点量化 vs 整数量化</h2>
+<h3 id="整数量化int4int8">整数量化（INT4/INT8）</h3>
+<p><div class="formula-block">\[q = \text{round}(x / s) + z\]</div></p>
+<ul>
+<li>等间距分布，每个量化级别间隔相同</li>
+<li>硬件支持广泛（所有 NVIDIA GPU）</li>
+<li>需要更精细的校准来处理异常值</li>
+<li>典型精度：INT8 损失 ~0.1-0.5%，INT4 损失 ~1-3%</li>
+</ul>
+<h3 id="浮点量化fp8fp4">浮点量化（FP8/FP4）</h3>
+<p>FP8 有两种格式：</p>
+<ul>
+<li><strong>E4M3</strong>：4 位指数 + 3 位尾数，范围 ±448，精度较高</li>
+<li><strong>E5M2</strong>：5 位指数 + 2 位尾数，范围 ±57344，精度较低</li>
+</ul>
+<p><div class="formula-block">\[q = \text{cast\_to\_fp8}(x / s)\]</div></p>
+<ul>
+<li>非等间距分布（对数间距），小值附近更密集</li>
+<li>天然适合神经网络的权重/激活分布（集中在 0 附近）</li>
+<li>FP8 量化精度通常优于 INT8（同等比特数下）</li>
+<li>需要 Hopper (H100) 或更新 GPU 的硬件加速</li>
+</ul>
+<h3 id="微缩放格式microscalingmxfp4mxfp8">微缩放格式（Microscaling：MXFP4/MXFP8）</h3>
+<p>OCP（Open Compute Project）定义的标准：</p>
+<ul>
+<li>每 32 个元素共享一个 8-bit 缩放因子（shared exponent）</li>
+<li>组内每个元素用 FP4 或 FP8 存储</li>
+<li>兼顾压缩率和精度</li>
+<li>NVIDIA Blackwell GPU 原生支持</li>
+</ul>
+<h3 id="nvfp4nvidia-专有">NVFP4（NVIDIA 专有）</h3>
+<ul>
+<li>每 16 个元素共享一个缩放因子</li>
+<li>全局缩放因子（global_scale）+ 局部缩放因子（per-group scale）</li>
+<li>专为 Blackwell SM100+ 架构设计</li>
+<li>需要校准数据确定 global_scale</li>
+</ul>
+<h2 id="校准calibration">校准（Calibration）</h2>
+<h3 id="为什么需要校准">为什么需要校准</h3>
+<p>量化参数（scale, zero_point）需要知道数据的实际分布范围。对于：</p>
+<ul>
+<li><strong>权重</strong>：可以直接从权重值计算（不需要数据）</li>
+<li><strong>激活</strong>：依赖输入数据，必须用代表性样本进行校准</li>
+</ul>
+<h3 id="校准过程">校准过程</h3>
+<pre><code class="language-python">
+# 伪代码：校准流程
+for batch in calibration_data:
+    output = model(batch)        # 前向传播
+    # Observer 在 hook 中自动收集统计量：
+    #   min_val = min(min_val, x.min())
+    #   max_val = max(max_val, x.max())
+
+# 校准结束后计算量化参数
+scale = (max_val - min_val) / (qmax - qmin)
+zero_point = qmin - round(min_val / scale)
+</code></pre>
+<h3 id="校准样本数量的影响">校准样本数量的影响</h3>
+<table><thead><tr>
+<th>样本数</th>
+<th>精度</th>
+<th>速度</th>
+<th>建议</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>128</td>
+<td>较低</td>
+<td>最快</td>
+<td>快速验证</td>
+</tr>
+<tr>
+<td>512</td>
+<td>良好</td>
+<td>适中</td>
+<td><strong>推荐默认值</strong></td>
+</tr>
+<tr>
+<td>1024</td>
+<td>最佳</td>
+<td>较慢</td>
+<td>追求最高精度</td>
+</tr>
+<tr>
+<td>2048+</td>
+<td>边际递减</td>
+<td>最慢</td>
+<td>通常无必要</td>
+</tr>
+</tbody></table>
+<h3 id="校准数据选择">校准数据选择</h3>
+<ul>
+<li>应覆盖模型实际使用场景的分布</li>
+<li>常用数据集：<code>HuggingFaceH4/ultrachat_200k</code>、<code>wikitext</code>、C4</li>
+<li>序列长度建议：2048（覆盖长上下文场景）</li>
+<li>避免使用分布极端或单一主题的数据</li>
+</ul>
+<h2 id="量化对推理的影响">量化对推理的影响</h2>
+<h3 id="内存节省">内存节省</h3>
+<table><thead><tr>
+<th>原始格式</th>
+<th>量化格式</th>
+<th>压缩比</th>
+<th>70B 模型显存</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>FP16</td>
+<td>FP8</td>
+<td>2×</td>
+<td>~70GB → ~35GB</td>
+</tr>
+<tr>
+<td>FP16</td>
+<td>INT8</td>
+<td>2×</td>
+<td>~70GB → ~35GB</td>
+</tr>
+<tr>
+<td>FP16</td>
+<td>INT4 (group=128)</td>
+<td>~3.5×</td>
+<td>~70GB → ~20GB</td>
+</tr>
+<tr>
+<td>FP16</td>
+<td>FP4</td>
+<td>4×</td>
+<td>~70GB → ~17.5GB</td>
+</tr>
+</tbody></table>
+<h3 id="推理加速">推理加速</h3>
+<ul>
+<li><strong>Weight-Only (W4A16)</strong>：主要节省带宽，对 batch=1 推理加速明显</li>
+<li><strong>W8A8 (FP8/INT8)</strong>：利用 FP8/INT8 GEMM 核心，大 batch 下加速 1.5-2×</li>
+<li><strong>W4A4 (NVFP4)</strong>：Blackwell GPU 原生 FP4 核心，极致性能</li>
+</ul>
+
+<div class="page-nav"><a href="01-architecture.html"><span><span class="label">上一篇</span>&larr; 01 - 项目架构解析</span></a><a href="03-rtn-quantization.html"><span><span class="label">下一篇</span>03 - RTN 最近舍入量化 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

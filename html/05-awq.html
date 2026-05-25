@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWQ（Activation-Aware Weight Quantization）量化详解 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html" class="active">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#算法概述">算法概述</a></li>
+          <li><a href="#理论基础">理论基础</a></li>
+          <li><a href="#mapping-系统">Mapping 系统</a></li>
+          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
+          <li><a href="#使用示例">使用示例</a></li>
+          <li><a href="#参数说明">参数说明</a></li>
+          <li><a href="#awq-vs-smoothquant">AWQ vs SmoothQuant</a></li>
+          <li><a href="#awq-的优缺点">AWQ 的优缺点</a></li>
+        </ol>
+      </div>
+<h1 id="awqactivation-aware-weight-quantization量化详解">AWQ（Activation-Aware Weight Quantization）量化详解</h1>
+<h2 id="算法概述">算法概述</h2>
+<p>AWQ 的核心洞察：在权重矩阵中，仅有约 <strong>1% 的通道</strong>对模型输出至关重要（"显著通道"），而这些通道可以通过<strong>激活统计</strong>来识别。AWQ 通过对这些显著通道进行缩放保护，在量化前降低它们的量化误差。</p>
+<p><strong>关键特性</strong>：AWQ 本身不是量化器——它是一个<strong>变换（Transform）</strong>。它在量化之前修改权重，必须与 <code>QuantizationModifier</code> 或 <code>GPTQModifier</code> 配合使用。</p>
+<h2 id="理论基础">理论基础</h2>
+<h3 id="核心问题">核心问题</h3>
+<p>对于线性层 \(Y = XW^T\)，如果对 \(W\) 直接量化，量化误差为：</p>
+<p><div class="formula-block">\[\Delta Y = X \cdot (W - Q(W))^T\]</div></p>
+<p>其中 \(Q(\cdot)\) 是量化函数。关键洞察：即使某些权重值很小，如果它们对应的输入激活通道很大，量化误差也会被放大。</p>
+<h3 id="通道重要性">通道重要性</h3>
+<p>AWQ 定义通道重要性为激活的平均绝对值：</p>
+<p><div class="formula-block">\[\text{importance}_j = \frac{1}{T} \sum_{t=1}^{T} |X_{t,j}|\]</div></p>
+<p>其中 \(T\) 是 token 数量，\(j\) 是通道索引。重要性高的通道需要保护。</p>
+<h3 id="等效缩放变换">等效缩放变换</h3>
+<p>AWQ 的核心操作是对权重施加通道缩放 \(s\)：</p>
+<p><div class="formula-block">\[Y = X \cdot W^T = (X \cdot \text{diag}(s)^{-1}) \cdot (\text{diag}(s) \cdot W)^T\]</div></p>
+<p>对于 smooth_layer（产出激活的层）和 balance_layers（消费激活的层）：</p>
+<ul>
+<li>smooth_layer 的输出除以 \(s\)（或等效地，smooth_layer 的权重除以 \(s\)）</li>
+<li>balance_layers 的权重乘以 \(s\)</li>
+</ul>
+<p>这样，balance_layers 中重要通道的权重被放大，量化时获得更小的相对误差。</p>
+<h3 id="grid-search-寻找最优缩放因子">Grid Search 寻找最优缩放因子</h3>
+<p>AWQ 通过网格搜索确定最优的 \(\alpha\) 值：</p>
+<p><div class="formula-block">\[s_j = x_{max,j}^{\alpha}\]</div></p>
+<p>其中 \(x_{max,j} = \max_t |X_{t,j}|\) 是第 \(j\) 个通道的最大激活值。</p>
+<p>搜索范围：\(\alpha \in \{0, 1/n_{grid}, 2/n_{grid}, ..., 1\}\)（默认 \(n_{grid}=20\)）</p>
+<p>对于每个 \(\alpha\) 值，计算量化后的输出误差：</p>
+<p><div class="formula-block">\[L(\alpha) = ||Q(W \cdot \text{diag}(s)) \cdot \text{diag}(s)^{-1} \cdot X^T - W \cdot X^T||_F^2\]</div></p>
+<p>选择使 \(L(\alpha)\) 最小的 \(\alpha^*\)。</p>
+<h3 id="duo-scaling">Duo-Scaling</h3>
+<p>当 <code>duo_scaling=True</code> 时，缩放因子同时考虑激活和权重：</p>
+<p><div class="formula-block">\[s_j = \frac{x_{max,j}^{\alpha}}{w_{max,j}^{1-\alpha}}\]</div></p>
+<p>其中 \(w_{max,j} = \max_i |W_{i,j}|\) 是第 \(j\) 列权重的最大绝对值。</p>
+<p><strong>直觉</strong>：</p>
+<ul>
+<li>激活大的通道应该被放大（保护量化精度）</li>
+<li>权重本身就大的通道不需要额外放大</li>
+</ul>
+<p>当 <code>duo_scaling="both"</code> 时，前半部分 grid 用 duo_scaling，后半部分不用，取两者中更好的结果。</p>
+<h2 id="mapping-系统">Mapping 系统</h2>
+<p>AWQ 需要知道哪些层之间存在激活传递关系：</p>
+<h3 id="mapping-结构">Mapping 结构</h3>
+<pre><code class="language-python">
+AWQMapping(
+    smooth_layer="model.layers.0.self_attn_layer_norm",   # 产出激活的层
+    balance_layers=["model.layers.0.q_proj",              # 消费激活的层
+                    "model.layers.0.k_proj",
+                    "model.layers.0.v_proj"],
+)
+</code></pre>
+<p><strong>smooth_layer</strong>：其输出将被缩放（除以 \(s\)），通常是 LayerNorm</p>
+<p><strong>balance_layers</strong>：其输入来自 smooth_layer，权重将被缩放（乘以 \(s\)）</p>
+<h3 id="自动推理-mapping">自动推理 Mapping</h3>
+<p>如果用户不指定 <code>mappings</code>，AWQ 会自动从模型架构推理：</p>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/transform/awq/dynamic_mappings.py
+def get_layer_mappings_from_model(model):
+    """基于模型结构自动推理 smooth_layer ↔ balance_layers 映射"""
+    # 典型映射：
+    # input_layernorm → q_proj, k_proj, v_proj
+    # post_attention_layernorm → gate_proj, up_proj
+    # (对于某些架构) up_proj → down_proj
+</code></pre>
+<h3 id="正则表达式匹配">正则表达式匹配</h3>
+<p>支持使用正则表达式批量指定映射：</p>
+<pre><code class="language-yaml">
+mappings:
+  - smooth_layer: "re:.*input_layernorm"
+    balance_layers: ["re:.*q_proj", "re:.*k_proj", "re:.*v_proj"]
+  - smooth_layer: "re:.*post_attention_layernorm"
+    balance_layers: ["re:.*gate_proj", "re:.*up_proj"]
+</code></pre>
+<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
+<h3 id="awqmodifier-生命周期">AWQModifier 生命周期</h3>
+<pre><code class="language-python">
+class AWQModifier(Modifier):
+    mappings: list[AWQMapping] | None = None
+    offload_device: torch.device | None = None
+    duo_scaling: bool | Literal["both"] = True
+    n_grid: int = 20
+    
+    def on_initialize(self, state):
+        # 如果用户未指定 mappings，自动推理
+        if self.mappings is None:
+            self.mappings = get_layer_mappings_from_model(state.model)
+        # MoE 模型默认开启 CPU offload
+        if is_moe_model(state.model):
+            self.offload_device = torch.device("cpu")
+    
+    def on_start(self, state):
+        # 解析正则表达式映射为实际模块引用
+        self._set_resolved_mappings(state.model)
+        # 注册激活缓存钩子
+        self._setup_activation_cache_hooks()
+    
+    def on_event(self, state, event):
+        if event.type_ == SEQUENTIAL_EPOCH_END:
+            # 对每个 mapping 执行 AWQ 缩放
+            for mapping in self._resolved_mappings:
+                self._apply_smoothing(mapping)
+</code></pre>
+<h3 id="grid-search-核心逻辑">Grid Search 核心逻辑</h3>
+<pre><code class="language-python">
+def _apply_smoothing(self, mapping):
+    """对一个 mapping 执行 AWQ grid search"""
+    
+    # 1. 收集该 mapping 的缓存激活
+    cached_activations = self._parent_args_cache[mapping.parent]
+    
+    # 2. 计算激活通道的最大值
+    x_max = compute_channel_max(cached_activations)  # shape: [C_in]
+    
+    # 3. Grid search
+    best_loss = float('inf')
+    best_scales = None
+    
+    for alpha_idx in range(self.n_grid):
+        alpha = alpha_idx / self.n_grid
+        
+        # 计算缩放因子
+        if self.duo_scaling:
+            scales = x_max ** alpha / w_max ** (1 - alpha)
+        else:
+            scales = x_max ** alpha
+        
+        # 模拟量化并计算误差
+        scaled_weight = weight * scales.unsqueeze(0)
+        q_weight = fake_quantize(scaled_weight, ...)
+        output_q = (q_weight / scales.unsqueeze(0)) @ activations
+        output_orig = weight @ activations
+        loss = mse(output_q, output_orig)
+        
+        if loss &lt; best_loss:
+            best_loss = loss
+            best_scales = scales
+    
+    # 4. 应用最优缩放
+    smooth_layer.weight /= best_scales       # smooth_layer 输出除以 s
+    for layer in balance_layers:
+        layer.weight *= best_scales.unsqueeze(0)  # balance_layer 输入乘以 s
+</code></pre>
+<h3 id="激活缓存与内存优化">激活缓存与内存优化</h3>
+<pre><code class="language-python">
+def _setup_activation_cache_hooks(self):
+    """注册钩子缓存激活值"""
+    for mapping in self._resolved_mappings:
+        # 在 parent 模块的前向传播时缓存输入
+        def hook(module, args, kwargs):
+            self._parent_args_cache[module].append((args, kwargs))
+        self.register_hook(mapping.parent, hook, "forward_pre")
+
+# 内存优化：可以将缓存的激活卸载到 CPU
+# offload_device=torch.device("cpu")
+</code></pre>
+<h2 id="使用示例">使用示例</h2>
+<h3 id="示例-1awq-w4a16-量化">示例 1：AWQ + W4A16 量化</h3>
+<pre><code class="language-python">
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import QuantizationModifier
+from llmcompressor.modifiers.awq import AWQModifier
+
+MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype="auto")
+
+dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+
+# AWQ 变换 + 量化（两个 Modifier 组合）
+recipe = [
+    AWQModifier(duo_scaling=True, n_grid=20),
+    QuantizationModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+    max_seq_length=2048,
+)
+
+model.save_pretrained("Llama-3-8B-W4A16-AWQ")
+</code></pre>
+<h3 id="示例-2自定义-mapping">示例 2：自定义 Mapping</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.transform.awq.mappings import AWQMapping
+
+recipe = [
+    AWQModifier(
+        mappings=[
+            AWQMapping(
+                smooth_layer="re:.*input_layernorm",
+                balance_layers=["re:.*q_proj", "re:.*k_proj", "re:.*v_proj"],
+            ),
+            AWQMapping(
+                smooth_layer="re:.*post_attention_layernorm",
+                balance_layers=["re:.*gate_proj", "re:.*up_proj"],
+            ),
+        ],
+        duo_scaling=True,
+        n_grid=20,
+    ),
+    QuantizationModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
+]
+</code></pre>
+<h3 id="示例-3moe-模型-awq">示例 3：MoE 模型 AWQ</h3>
+<pre><code class="language-python">
+# MoE 模型自动启用 CPU offload
+recipe = [
+    AWQModifier(
+        # offload_device 会自动设为 CPU（检测到 MoE）
+        duo_scaling=True,
+    ),
+    QuantizationModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head", "re:.*mlp.gate$"],
+    ),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+)
+</code></pre>
+<h3 id="示例-4awq-gptq-组合">示例 4：AWQ + GPTQ 组合</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+# AWQ 做通道缩放预处理，GPTQ 做精细量化
+recipe = [
+    AWQModifier(duo_scaling=True),
+    GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
+]
+</code></pre>
+<h2 id="参数说明">参数说明</h2>
+<table><thead><tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>mappings</code></td>
+<td>None（自动推理）</td>
+<td>层映射关系列表</td>
+</tr>
+<tr>
+<td><code>duo_scaling</code></td>
+<td>True</td>
+<td>是否同时考虑激活和权重</td>
+</tr>
+<tr>
+<td><code>n_grid</code></td>
+<td>20</td>
+<td>Grid search 网格点数</td>
+</tr>
+<tr>
+<td><code>offload_device</code></td>
+<td>None（MoE 自动 CPU）</td>
+<td>激活缓存卸载设备</td>
+</tr>
+</tbody></table>
+<h2 id="awq-vs-smoothquant">AWQ vs SmoothQuant</h2>
+<table><thead><tr>
+<th></th>
+<th>AWQ</th>
+<th>SmoothQuant</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>目标场景</td>
+<td>W4A16 仅权重量化</td>
+<td>W8A8 权重+激活量化</td>
+</tr>
+<tr>
+<td>缩放因子搜索</td>
+<td>Grid search（20 点）</td>
+<td>公式直接计算</td>
+</tr>
+<tr>
+<td>考虑权重</td>
+<td>duo_scaling 可选</td>
+<td>使用 α 参数平衡</td>
+</tr>
+<tr>
+<td>是否量化器</td>
+<td>否（变换）</td>
+<td>否（变换）</td>
+</tr>
+<tr>
+<td>典型搭配</td>
+<td>+ QuantizationModifier/GPTQModifier</td>
+<td>+ GPTQ/QuantizationModifier</td>
+</tr>
+</tbody></table>
+<h2 id="awq-的优缺点">AWQ 的优缺点</h2>
+<p><strong>优点</strong>：</p>
+<ul>
+<li>精度高（通过保护关键通道）</li>
+<li>速度快于 GPTQ（无需 Hessian 计算）</li>
+<li>自动推理 Mapping（无需手动配置）</li>
+<li>MoE 模型友好（自动 CPU offload）</li>
+</ul>
+<p><strong>缺点</strong>：</p>
+<ul>
+<li>本身不做量化，必须配合其他 Modifier</li>
+<li>缓存激活占内存（大模型可能 OOM）</li>
+<li>Grid search 可能找不到全局最优</li>
+<li>仅支持 per-channel 及以上粒度（不支持 per-tensor）</li>
+</ul>
+
+<div class="page-nav"><a href="04-gptq.html"><span><span class="label">上一篇</span>&larr; 04 - GPTQ 量化详解</span></a><a href="06-autoround.html"><span><span class="label">下一篇</span>06 - AutoRound 量化 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

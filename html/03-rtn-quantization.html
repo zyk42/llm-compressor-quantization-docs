@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTN（Round-to-Nearest）最近舍入量化 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html" class="active">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#算法概述">算法概述</a></li>
+          <li><a href="#算法原理">算法原理</a></li>
+          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
+          <li><a href="#使用示例">使用示例</a></li>
+          <li><a href="#参数说明">参数说明</a></li>
+          <li><a href="#适用场景">适用场景</a></li>
+        </ol>
+      </div>
+<h1 id="rtnround-to-nearest最近舍入量化">RTN（Round-to-Nearest）最近舍入量化</h1>
+<h2 id="算法概述">算法概述</h2>
+<p>RTN 是最简单的量化方法——将每个权重值舍入到最近的量化级别。虽然简单，但对于 FP8 等高精度格式，RTN 已经能获得极佳效果。</p>
+<h2 id="算法原理">算法原理</h2>
+<h3 id="核心公式">核心公式</h3>
+<p>RTN 的量化过程可以分解为三步：</p>
+<p><strong>Step 1: 计算缩放因子</strong></p>
+<p>对称量化：</p>
+<p><div class="formula-block">\[s = \frac{\max(|W|)}{q_{max}}\]</div></p>
+<p>非对称量化：</p>
+<p><div class="formula-block">\[s = \frac{W_{max} - W_{min}}{q_{max} - q_{min}}, \quad z = q_{min} - \text{round}\left(\frac{W_{min}}{s}\right)\]</div></p>
+<p><strong>Step 2: 量化</strong></p>
+<p><div class="formula-block">\[W_q = \text{clamp}\left(\text{round}\left(\frac{W}{s}\right) + z,\ q_{min},\ q_{max}\right)\]</div></p>
+<p><strong>Step 3: 反量化（推理时）</strong></p>
+<p><div class="formula-block">\[\hat{W} = s \cdot (W_q - z)\]</div></p>
+<h3 id="为什么-fp8-rtn-就足够了">为什么 FP8 + RTN 就足够了？</h3>
+<ol>
+<li><strong>FP8 E4M3 有 448 个不同值</strong>：足以表示大多数权重分布</li>
+<li><strong>浮点量化天然适配</strong>：权重分布集中在 0 附近，FP8 的对数间距正好在 0 附近更密集</li>
+<li><strong>误差极小</strong>：FP8 的量化误差通常在 0.1% 以内</li>
+</ol>
+<h3 id="rtn-在低比特下的局限">RTN 在低比特下的局限</h3>
+<p>当降到 4-bit（仅 16 个量化级别）时：</p>
+<ul>
+<li>舍入误差显著增大：\(E[\epsilon^2] = s^2/12\) 中的 \(s\) 变大</li>
+<li>异常权重（outlier）的截断误差严重</li>
+<li>各列误差独立累积，无补偿机制</li>
+</ul>
+<p>这就是为什么 4-bit 量化通常需要 GPTQ/AWQ 等更精细的算法。</p>
+<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
+<h3 id="quantizationmodifier">QuantizationModifier</h3>
+<p>RTN 量化通过 <code>QuantizationModifier</code> 实现，它是所有量化方法的基础类：</p>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/quantization/quantization/base.py
+
+class QuantizationModifier(Modifier, QuantizationMixin):
+    """
+    标准后训练量化修改器。
+    使用 Observer 收集统计量，然后计算 scale/zero_point。
+    """
+    
+    def on_initialize(self, state, **kwargs):
+        # 将量化配置应用到目标模块
+        self.initialize_quantization(state.model)
+    
+    def on_start(self, state, **kwargs):
+        # 开始校准：注册 Observer 钩子
+        self.start_calibration(state.model)
+    
+    def on_event(self, state, event, **kwargs):
+        if event.type_ == EventType.SEQUENTIAL_EPOCH_END:
+            # 观察权重，计算量化参数
+            for module in quantized_modules:
+                observe(module, "weight")       # 让 Observer 看到权重
+                update_qparams(module, "weight") # 计算 scale/zp
+    
+    def on_end(self, state, **kwargs):
+        # 冻结量化：移除 Observer，固定参数
+        self.end_calibration(state.model)
+</code></pre>
+<h3 id="observer-如何工作">Observer 如何工作</h3>
+<p>以 MinMax Observer 为例：</p>
+<pre><code class="language-python">
+# src/llmcompressor/observers/min_max.py
+
+class MemorylessMinMaxObserver(Observer):
+    """只使用当前观测值的 min/max"""
+    
+    def update_statistics_from_observed(self, tensor):
+        # 直接用当前 tensor 的 min/max
+        self.min_vals = tensor.min(dim=-1).values
+        self.max_vals = tensor.max(dim=-1).values
+    
+    def get_qparams(self):
+        # 根据 min/max 计算 scale 和 zero_point
+        return calculate_qparams(self.min_vals, self.max_vals, self.quantization_args)
+</code></pre>
+<h3 id="data-free-模式">Data-Free 模式</h3>
+<p>当使用 FP8_DYNAMIC 等方案且无校准数据时：</p>
+<ol>
+<li>权重量化：直接从权重值计算 scale（<code>observe(weight)</code> → <code>update_qparams()</code>）</li>
+<li>激活量化：标记为 <code>dynamic=True</code>，在推理时动态计算 per-token scale</li>
+<li>Pipeline 选择：自动使用 <code>DataFreePipeline</code></li>
+</ol>
+<h2 id="使用示例">使用示例</h2>
+<h3 id="示例-1fp8-动态量化无需校准数据">示例 1：FP8 动态量化（无需校准数据）</h3>
+<pre><code class="language-python">
+from transformers import AutoModelForCausalLM
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import QuantizationModifier
+
+model = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    dtype="auto",
+)
+
+# FP8 动态量化：权重静态 FP8，激活动态 per-token FP8
+recipe = QuantizationModifier(
+    targets="Linear",
+    scheme="FP8_DYNAMIC",
+    ignore=["lm_head"],
+)
+
+# 无需 dataset 参数 — 直接量化
+oneshot(model=model, recipe=recipe)
+model.save_pretrained("Llama-3-8B-FP8-Dynamic")
+</code></pre>
+<h3 id="示例-2fp8-block-量化">示例 2：FP8 Block 量化</h3>
+<pre><code class="language-python">
+recipe = QuantizationModifier(
+    targets="Linear",
+    scheme="FP8_BLOCK",  # Block-wise FP8 (类似 DeepSeek 风格)
+    ignore=["lm_head", "re:.*mlp.gate$"],  # 忽略门控层
+)
+
+oneshot(model=model, recipe=recipe)
+</code></pre>
+<h3 id="示例-3带校准的-w8a8-int8-量化">示例 3：带校准的 W8A8 INT8 量化</h3>
+<pre><code class="language-python">
+from datasets import load_dataset
+
+# 准备校准数据
+dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+
+recipe = QuantizationModifier(
+    targets="Linear",
+    scheme="W8A8",      # INT8 权重 + INT8 激活
+    ignore=["lm_head"],
+)
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+    max_seq_length=2048,
+)
+</code></pre>
+<h3 id="示例-4w4a16-rtn-量化精度较低仅用于快速测试">示例 4：W4A16 RTN 量化（精度较低，仅用于快速测试）</h3>
+<pre><code class="language-python">
+recipe = QuantizationModifier(
+    targets="Linear",
+    scheme="W4A16",     # 4-bit 权重，FP16 激活
+    ignore=["lm_head"],
+)
+
+# 注意：4-bit RTN 精度不如 GPTQ/AWQ，生产环境建议使用后者
+oneshot(model=model, recipe=recipe)
+</code></pre>
+<h2 id="参数说明">参数说明</h2>
+<table><thead><tr>
+<th>参数</th>
+<th>类型</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>targets</code></td>
+<td>str/list</td>
+<td>量化目标层，通常为 <code>"Linear"</code></td>
+</tr>
+<tr>
+<td><code>scheme</code></td>
+<td>str</td>
+<td>量化方案预设名（见下表）</td>
+</tr>
+<tr>
+<td><code>ignore</code></td>
+<td>list</td>
+<td>不量化的层，支持正则 <code>"re:..."</code></td>
+</tr>
+<tr>
+<td><code>kv_cache_scheme</code></td>
+<td>dict</td>
+<td>KV Cache 量化配置</td>
+</tr>
+<tr>
+<td><code>observer</code></td>
+<td>str/dict</td>
+<td>Observer 类型选择</td>
+</tr>
+</tbody></table>
+<h3 id="常用-scheme-预设">常用 Scheme 预设</h3>
+<table><thead><tr>
+<th>Scheme</th>
+<th>权重</th>
+<th>激活</th>
+<th>策略</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>FP8_DYNAMIC</code></td>
+<td>FP8 per-channel</td>
+<td>FP8 per-token dynamic</td>
+<td>无需校准</td>
+</tr>
+<tr>
+<td><code>FP8_BLOCK</code></td>
+<td>FP8 block (128×128)</td>
+<td>FP8 block dynamic</td>
+<td>无需校准</td>
+</tr>
+<tr>
+<td><code>W8A8</code></td>
+<td>INT8 per-channel</td>
+<td>INT8 per-token dynamic</td>
+<td>需校准</td>
+</tr>
+<tr>
+<td><code>W4A16</code></td>
+<td>INT4 per-group(128)</td>
+<td>FP16</td>
+<td>建议用 GPTQ</td>
+</tr>
+<tr>
+<td><code>W8A16</code></td>
+<td>INT8 per-channel</td>
+<td>FP16</td>
+<td>无需校准</td>
+</tr>
+</tbody></table>
+<h2 id="适用场景">适用场景</h2>
+<table><thead><tr>
+<th>场景</th>
+<th>推荐方案</th>
+<th>原因</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>快速部署，精度要求高</td>
+<td>FP8_DYNAMIC</td>
+<td>几乎无损，无需校准</td>
+</tr>
+<tr>
+<td>DeepSeek 风格部署</td>
+<td>FP8_BLOCK</td>
+<td>Block FP8 兼容 DeepGEMM</td>
+</tr>
+<tr>
+<td>快速验证量化效果</td>
+<td>W4A16 RTN</td>
+<td>速度最快，但精度有限</td>
+</tr>
+<tr>
+<td>生产 4-bit 部署</td>
+<td>GPTQ/AWQ（非 RTN）</td>
+<td>4-bit RTN 精度不足</td>
+</tr>
+</tbody></table>
+
+<div class="page-nav"><a href="02-quantization-fundamentals.html"><span><span class="label">上一篇</span>&larr; 02 - 量化基础理论</span></a><a href="04-gptq.html"><span><span class="label">下一篇</span>04 - GPTQ 量化详解 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

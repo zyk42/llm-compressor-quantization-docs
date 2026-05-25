@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Compressor 量化文档 - 总览</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html" class="active">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <h1>LLM Compressor 总览与快速入门</h1>
+
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#intro">项目简介</a></li>
+          <li><a href="#install">安装</a></li>
+          <li><a href="#quickstart">30 秒快速上手</a></li>
+          <li><a href="#precisions">支持的量化精度</a></li>
+          <li><a href="#algorithms">支持的量化算法</a></li>
+          <li><a href="#guide">量化方法选择指南</a></li>
+        </ol>
+      </div>
+
+      <h2 id="intro">项目简介</h2>
+      <p><code>llm-compressor</code> 是 vLLM 项目提供的大语言模型后训练压缩库，专注于将 LLM 量化为可在 vLLM 高效推理的格式。</p>
+
+      <div class="card">
+        <div class="card-title">核心特性</div>
+        <ul>
+          <li><strong>全面的量化算法</strong>：RTN、GPTQ、AWQ、AutoRound、SmoothQuant、SpinQuant、QuIP</li>
+          <li><strong>丰富的量化格式</strong>：INT4/INT8、FP8（Dynamic/Block）、NVFP4、MXFP4/MXFP8</li>
+          <li><strong>多维度量化</strong>：权重、激活、KV Cache、Attention 量化</li>
+          <li><strong>大模型支持</strong>：DDP 分布式、Sequential Onloading、磁盘卸载，支持 675B+ 参数模型</li>
+          <li><strong>无缝集成</strong>：与 Hugging Face 生态无缝衔接，输出 <code>compressed-tensors</code> 格式直接兼容 vLLM</li>
+        </ul>
+      </div>
+
+      <h2 id="install">安装</h2>
+      <pre><code>pip install llmcompressor</code></pre>
+      <p>从源码安装（获取最新特性）：</p>
+      <pre><code>git clone https://github.com/vllm-project/llm-compressor.git
+cd llm-compressor
+pip install -e .</code></pre>
+
+      <h2 id="quickstart">30 秒快速上手</h2>
+      <p>以下示例将 Llama-3 模型量化为 FP8 格式（无需校准数据）：</p>
+      <pre><code><span class="keyword">from</span> transformers <span class="keyword">import</span> AutoModelForCausalLM, AutoTokenizer
+<span class="keyword">from</span> llmcompressor <span class="keyword">import</span> oneshot
+<span class="keyword">from</span> llmcompressor.modifiers.quantization <span class="keyword">import</span> QuantizationModifier
+
+<span class="comment"># 加载模型</span>
+model = AutoModelForCausalLM.from_pretrained(
+    <span class="string">"meta-llama/Meta-Llama-3-8B-Instruct"</span>, dtype=<span class="string">"auto"</span>
+)
+
+<span class="comment"># 配置量化：FP8 动态量化（无需校准数据）</span>
+recipe = QuantizationModifier(
+    targets=<span class="string">"Linear"</span>,
+    scheme=<span class="string">"FP8_DYNAMIC"</span>,
+    ignore=[<span class="string">"lm_head"</span>],
+)
+
+<span class="comment"># 一键量化</span>
+oneshot(model=model, recipe=recipe)
+
+<span class="comment"># 保存量化模型</span>
+model.save_pretrained(<span class="string">"Llama-3-8B-FP8"</span>)</code></pre>
+
+      <h2 id="precisions">支持的量化精度</h2>
+      <table>
+        <thead>
+          <tr><th>类型</th><th>格式</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>权重+激活量化</td><td>W8A8 (INT8/FP8)</td><td>8位权重 + 8位激活</td></tr>
+          <tr><td>权重+激活量化</td><td>W4A4 (NVFP4/MXFP4)</td><td>4位权重 + 4位激活</td></tr>
+          <tr><td>权重+激活量化</td><td>W4A8 (FP8)</td><td>4位权重 + 8位激活</td></tr>
+          <tr><td>仅权重量化</td><td>W4A16 (INT4)</td><td>4位权重，激活保持 FP16</td></tr>
+          <tr><td>仅权重量化</td><td>W8A16</td><td>8位权重，激活保持 FP16</td></tr>
+          <tr><td>微缩放格式</td><td>MXFP4/MXFP8</td><td>OCP 标准微缩放浮点</td></tr>
+          <tr><td>KV Cache</td><td>FP8</td><td>KV 缓存 FP8 量化</td></tr>
+          <tr><td>Attention</td><td>FP8/NVFP4</td><td>注意力层量化</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="algorithms">支持的量化算法</h2>
+      <table>
+        <thead>
+          <tr><th>算法</th><th>类型</th><th>需要校准</th><th>适用场景</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>RTN</strong></td><td>最近舍入</td><td>否*</td><td>快速量化，FP8 精度损失小</td></tr>
+          <tr><td><strong>GPTQ</strong></td><td>Hessian 权重优化</td><td>是</td><td>W4A16 高精度，主流选择</td></tr>
+          <tr><td><strong>AWQ</strong></td><td>激活感知缩放</td><td>是</td><td>W4A16 高精度，与 GPTQ 互补</td></tr>
+          <tr><td><strong>AutoRound</strong></td><td>梯度优化舍入</td><td>是</td><td>高精度，支持多种格式</td></tr>
+          <tr><td><strong>SmoothQuant</strong></td><td>激活平滑变换</td><td>是</td><td>W8A8 前置处理</td></tr>
+          <tr><td><strong>SpinQuant</strong></td><td>旋转变换</td><td>否</td><td>降低权重不相干性</td></tr>
+          <tr><td><strong>QuIP</strong></td><td>Hadamard 旋转</td><td>否</td><td>降低权重不相干性</td></tr>
+          <tr><td><strong>IMatrix</strong></td><td>重要性加权</td><td>是</td><td>增强其他算法精度</td></tr>
+        </tbody>
+      </table>
+
+      <blockquote>
+        <p><strong>注</strong>：RTN 用于 FP8 时无需校准数据，用于 INT8/INT4 时建议使用校准数据。</p>
+      </blockquote>
+
+      <h2 id="guide">量化方法选择指南</h2>
+      <div class="diagram">需要量化 LLM？
+│
+├── 追求速度，精度损失可接受？
+│   └── FP8_DYNAMIC (RTN, 无需校准数据)
+│
+├── 需要 4-bit 压缩？
+│   ├── 有 Blackwell GPU？
+│   │   └── NVFP4 (W4A4)
+│   ├── 需要最高精度？
+│   │   └── GPTQ 或 AWQ (W4A16)
+│   └── 需要快速量化？
+│       └── RTN + MXFP4
+│
+├── 需要 W8A8 整型量化？
+│   └── SmoothQuant + GPTQ (INT8)
+│
+└── 模型非常大（70B+）？
+    ├── 单卡 → Sequential Onloading
+    ├── 多卡 → DDP 分布式
+    └── 无 HF 定义 → model_free_ptq</div>
+
+      <div class="page-nav">
+        <span></span>
+        <a href="01-architecture.html">
+          <span><span class="label">下一篇</span>项目架构解析 &rarr;</span>
+        </a>
+      </div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

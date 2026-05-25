@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPTQ 量化详解 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html" class="active">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#算法概述">算法概述</a></li>
+          <li><a href="#理论基础">理论基础</a></li>
+          <li><a href="#activation-ordering激活排序">Activation Ordering（激活排序）</a></li>
+          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
+          <li><a href="#使用示例">使用示例</a></li>
+          <li><a href="#关键参数调优">关键参数调优</a></li>
+          <li><a href="#gptq-的优缺点">GPTQ 的优缺点</a></li>
+          <li><a href="#与其他算法的对比">与其他算法的对比</a></li>
+        </ol>
+      </div>
+<h1 id="gptq-量化详解">GPTQ 量化详解</h1>
+<h2 id="算法概述">算法概述</h2>
+<p>GPTQ（Accurate Post-Training Quantization for Generative Pre-trained Transformers）是目前最主流的 4-bit 权重量化算法。它基于 OBQ（Optimal Brain Quantization）框架，通过 Hessian 矩阵指导的逐列量化与误差补偿，在低比特量化时显著优于 RTN。</p>
+<p><strong>核心思想</strong>：量化每一列权重时，利用 Hessian 逆矩阵将该列的量化误差最优地分配到尚未量化的列上，从而最小化整体输出误差。</p>
+<h2 id="理论基础">理论基础</h2>
+<h3 id="问题形式化">问题形式化</h3>
+<p>对于线性层 \(Y = XW^T\)，量化的目标是找到量化权重 \(\hat{W}\) 使得输出误差最小：</p>
+<p><div class="formula-block">\[\min_{\hat{W}} ||XW^T - X\hat{W}^T||_2^2 = \min_{\hat{W}} ||X(W - \hat{W})^T||_2^2\]</div></p>
+<p>定义 Hessian 矩阵 \(H = X^TX\)（输入激活的协方差矩阵），上述目标等价于：</p>
+<p><div class="formula-block">\[\min_{\hat{W}} (W - \hat{W})^T H (W - \hat{W})\]</div></p>
+<h3 id="从-obq-到-gptq">从 OBQ 到 GPTQ</h3>
+<p><strong>OBQ 核心公式</strong>：当量化第 \(i\) 列权重 \(w_i\) 到 \(\hat{w}_i\) 时，最优的误差补偿为：</p>
+<p><div class="formula-block">\[\delta_j = -\frac{w_i - \hat{w}_i}{[H^{-1}]_{ii}} \cdot [H^{-1}]_{ij}, \quad \forall j > i\]</div></p>
+<p>其中：</p>
+<ul>
+<li>\([H^{-1}]_{ii}\)：Hessian 逆矩阵的第 \(i\) 个对角元素</li>
+<li>\([H^{-1}]_{ij}\)：Hessian 逆矩阵第 \(i\) 行第 \(j\) 列的元素</li>
+<li>\(\delta_j\)：施加到第 \(j\) 列权重的补偿值</li>
+</ul>
+<p><strong>直觉理解</strong>：</p>
+<ul>
+<li>\([H^{-1}]_{ii}\) 反映第 \(i\) 列的"量化代价"——值越大，该列量化损失越小</li>
+<li>\([H^{-1}]_{ij}\) 反映列之间的"耦合程度"——用于在列间传播误差</li>
+</ul>
+<h3 id="hessian-矩阵的构造">Hessian 矩阵的构造</h3>
+<p>在 LLM Compressor 中，Hessian 通过校准数据的输入激活累积计算：</p>
+<p><div class="formula-block">\[H = \frac{2}{N} \sum_{n=1}^{N} x_n x_n^T\]</div></p>
+<p>其中 \(x_n\) 是第 \(n\) 个样本的输入向量（已展平）。代码中乘以 \(\sqrt{2}\) 来简化：</p>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/gptq/gptq_quantize.py
+inp = math.sqrt(2) * inp        # 预乘 √2
+H += inp.matmul(inp.t())        # H = Σ (√2·x)(√2·x)^T = 2·Σ xx^T
+</code></pre>
+<h3 id="逆-hessian-的计算">逆 Hessian 的计算</h3>
+<p>GPTQ 需要 \(H^{-1}\)。为确保数值稳定性：</p>
+<ol>
+<li><strong>阻尼（Dampening）</strong>：\(H \leftarrow H + \lambda I\)，其中 \(\lambda = \text{percdamp} \cdot \text{mean}(\text{diag}(H))\)</li>
+<li><strong>Cholesky 分解</strong>：\(H = LL^T\)</li>
+<li><strong>Cholesky 求逆</strong>：\(H^{-1} = (LL^T)^{-1}\)</li>
+<li><strong>上三角 Cholesky</strong>：\(H^{-1} = U^T U\)（方便后续逐列访问）</li>
+</ol>
+<pre><code class="language-python">
+damp = percdamp * torch.mean(torch.diag(H))
+H[diag, diag] += damp
+H = torch.linalg.cholesky(H)
+H = torch.cholesky_inverse(H)
+H = torch.linalg.cholesky(H, upper=True)  # 上三角形式
+Hinv = H
+</code></pre>
+<h3 id="block-wise-量化">Block-wise 量化</h3>
+<p>为提高计算效率，GPTQ 将列分为大小为 <code>blocksize</code>（默认 128）的块：</p>
+<pre><code class="language-text">
+W = [Block_0 | Block_1 | ... | Block_K]
+     (128列)   (128列)         (128列)
+</code></pre>
+<p><strong>块内</strong>：逐列量化 + 误差传播（仅在块内）</p>
+<p><strong>块间</strong>：将整个块的累积误差一次性传播到后续列</p>
+<pre><code class="language-python">
+for i1 in range(0, num_columns, blocksize):
+    i2 = min(i1 + blocksize, num_columns)
+    
+    # 块内逐列量化
+    for i in range(i2 - i1):
+        w = W1[:, i]               # 当前列
+        d = Hinv1[i, i]            # 对角元素
+        q = fake_quantize(w, ...)  # 量化
+        
+        err1 = (w - q) / d         # 标准化误差
+        # 块内误差传播
+        W1[:, i:] -= err1.unsqueeze(1) * Hinv1[i, i:].unsqueeze(0)
+    
+    # 块间误差传播
+    W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
+</code></pre>
+<h3 id="量化损失度量">量化损失度量</h3>
+<p>每列的量化损失为：</p>
+<p><div class="formula-block">\[L_i = \frac{(w_i - \hat{w}_i)^2}{[H^{-1}]_{ii}^2}\]</div></p>
+<p>总损失为所有列的累加（除以 2）。此值可用于评估量化质量。</p>
+<h2 id="activation-ordering激活排序">Activation Ordering（激活排序）</h2>
+<p>GPTQ 支持三种列处理顺序，影响精度：</p>
+<h3 id="static-ordering默认">Static Ordering（默认）</h3>
+<p>按 Hessian 对角线 \([H^{-1}]_{ii}\) 降序排列——先量化"代价最小"的列：</p>
+<pre><code class="language-python">
+perm = torch.argsort(torch.diag(H), descending=True)
+W = W[:, perm]
+H = H[perm][:, perm]
+</code></pre>
+<p><strong>原理</strong>：对角值大的列量化误差对输出影响小，先处理它们可以为后续的"敏感列"留出更多补偿空间。</p>
+<h3 id="group-ordering">Group Ordering</h3>
+<p>仅在分组量化中使用。在每个 group 内按重要性排序：</p>
+<ul>
+<li>先计算排列后的 scale/zero_point</li>
+<li>使用 <code>g_idx</code> 追踪每列属于哪个 group</li>
+</ul>
+<h3 id="weight-ordering">Weight Ordering</h3>
+<p>基于权重重要性（而非 Hessian）的排列，量化后将权重恢复原始顺序并存储 <code>g_idx</code> 映射。</p>
+<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
+<h3 id="gptqmodifier-生命周期">GPTQModifier 生命周期</h3>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/gptq/base.py
+
+class GPTQModifier(Modifier, QuantizationMixin):
+    # 参数
+    block_size: int = 128           # 块大小
+    dampening_frac: float = 0.01    # 阻尼系数
+    actorder: str = "static"        # 激活排序方式
+    offload_hessians: bool = False  # 将 Hessian 卸载到 CPU
+    
+    def on_initialize(self, state):
+        # 1. 应用量化配置到模型（从 QuantizationMixin）
+        self.initialize_quantization(state.model)
+        # 2. 为每个目标模块创建空 Hessian 矩阵
+        for module in target_modules:
+            H = make_empty_hessian(module)
+    
+    def on_start(self, state):
+        # 注册前向钩子：捕获输入以累积 Hessian
+        for module in target_modules:
+            self.register_hook(module, self._accumulate_hessian_hook, "forward_pre")
+    
+    def on_event(self, state, event):
+        if event.type_ == SEQUENTIAL_EPOCH_END:
+            # 对每个模块执行 GPTQ 量化
+            for module in target_modules:
+                loss, W_q, scale, zp, g_idx = quantize_weight(
+                    module, quant_args, hessian,
+                    blocksize=self.block_size,
+                    percdamp=self.dampening_frac,
+                )
+                # 更新模块权重和量化参数
+                module.weight.data = W_q
+                module.weight_scale = scale
+                module.weight_zero_point = zp
+</code></pre>
+<h3 id="hessian-累积钩子">Hessian 累积钩子</h3>
+<pre><code class="language-python">
+def _accumulate_hessian_hook(self, module, inp):
+    """每次前向传播时累积 Hessian"""
+    H, num_samples = accumulate_hessian(
+        inp[0], module, module._hessian, module._num_samples
+    )
+    module._hessian = H
+    module._num_samples = num_samples
+</code></pre>
+<h3 id="ddp-分布式-hessian-汇总">DDP 分布式 Hessian 汇总</h3>
+<p>多 GPU 时，各 rank 分别在自己的数据上计算部分 Hessian，然后汇总：</p>
+<pre><code class="language-python">
+# 各 rank 的 Hessian 求和
+dist.reduce(hessian, dst=owner_rank, op=dist.ReduceOp.SUM)
+# owner_rank 执行 quantize_weight，然后广播结果
+</code></pre>
+<h2 id="使用示例">使用示例</h2>
+<h3 id="示例-1标准-w4a16-gptq-量化">示例 1：标准 W4A16 GPTQ 量化</h3>
+<pre><code class="language-python">
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
+from llmcompressor import oneshot
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype="auto")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+
+# 准备校准数据
+dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+
+# GPTQ W4A16 量化
+recipe = GPTQModifier(
+    targets="Linear",
+    scheme="W4A16",
+    ignore=["lm_head"],
+    block_size=128,
+    dampening_frac=0.01,
+)
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+    max_seq_length=2048,
+)
+
+model.save_pretrained("Llama-3-8B-W4A16-GPTQ")
+</code></pre>
+<h3 id="示例-2gptq-activation-ordering">示例 2：GPTQ + Activation Ordering</h3>
+<pre><code class="language-python">
+from compressed_tensors.quantization import QuantizationArgs
+
+recipe = GPTQModifier(
+    targets="Linear",
+    scheme="W4A16",
+    ignore=["lm_head"],
+    actorder="static",    # 按 Hessian 对角线排序（推荐）
+    block_size=128,
+)
+</code></pre>
+<h3 id="示例-3ddp-多卡加速">示例 3：DDP 多卡加速</h3>
+<pre><code class="language-python">
+# 脚本 gptq_ddp.py
+from llmcompressor import oneshot
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+recipe = GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"])
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+)
+</code></pre>
+<p>启动命令：</p>
+<pre><code class="language-bash">
+torchrun --nproc_per_node=4 gptq_ddp.py
+</code></pre>
+<h3 id="示例-4gptq-fp4-格式">示例 4：GPTQ + FP4 格式</h3>
+<pre><code class="language-python">
+recipe = GPTQModifier(
+    targets="Linear",
+    scheme="W4A4",           # NVFP4 权重 + FP4 激活
+    ignore=["lm_head", "re:.*mlp.gate$"],
+    block_size=128,
+)
+</code></pre>
+<h2 id="关键参数调优">关键参数调优</h2>
+<table><thead><tr>
+<th>参数</th>
+<th>默认值</th>
+<th>调优建议</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>block_size</code></td>
+<td>128</td>
+<td>增大（256）可能略提精度但更慢；减小（64）加速但精度下降</td>
+</tr>
+<tr>
+<td><code>dampening_frac</code></td>
+<td>0.01</td>
+<td>Cholesky 失败时增大到 0.05-0.1</td>
+</tr>
+<tr>
+<td><code>actorder</code></td>
+<td>"static"</td>
+<td>启用 static 通常提升 0.1-0.3 perplexity</td>
+</tr>
+<tr>
+<td><code>offload_hessians</code></td>
+<td>False</td>
+<td>内存不足时启用，将 Hessian 放到 CPU</td>
+</tr>
+<tr>
+<td><code>num_calibration_samples</code></td>
+<td>512</td>
+<td>128-1024 范围内调整</td>
+</tr>
+</tbody></table>
+<h2 id="gptq-的优缺点">GPTQ 的优缺点</h2>
+<p><strong>优点</strong>：</p>
+<ul>
+<li>4-bit 量化精度极高（接近 FP16 原始模型）</li>
+<li>理论基础扎实（最优误差补偿）</li>
+<li>支持多种量化策略（per-channel、per-group、per-block）</li>
+<li>广泛的硬件支持</li>
+</ul>
+<p><strong>缺点</strong>：</p>
+<ul>
+<li>需要校准数据（通常 512 样本）</li>
+<li>量化速度较慢（需要计算 Hessian + Cholesky 分解）</li>
+<li>Hessian 占用额外显存（\(C_{in} \times C_{in}\) 矩阵）</li>
+<li>数值不稳定时 Cholesky 可能失败</li>
+</ul>
+<h2 id="与其他算法的对比">与其他算法的对比</h2>
+<table><thead><tr>
+<th></th>
+<th>GPTQ</th>
+<th>AWQ</th>
+<th>AutoRound</th>
+<th>RTN</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>精度（W4A16）</td>
+<td>★★★★★</td>
+<td>★★★★★</td>
+<td>★★★★★</td>
+<td>★★★</td>
+</tr>
+<tr>
+<td>量化速度</td>
+<td>★★★</td>
+<td>★★★★</td>
+<td>★★</td>
+<td>★★★★★</td>
+</tr>
+<tr>
+<td>内存开销</td>
+<td>★★★</td>
+<td>★★★★</td>
+<td>★★★</td>
+<td>★★★★★</td>
+</tr>
+<tr>
+<td>理论基础</td>
+<td>最优补偿</td>
+<td>通道缩放</td>
+<td>优化舍入</td>
+<td>无</td>
+</tr>
+<tr>
+<td>校准数据</td>
+<td>必需</td>
+<td>必需</td>
+<td>必需</td>
+<td>可选</td>
+</tr>
+</tbody></table>
+
+<div class="page-nav"><a href="03-rtn-quantization.html"><span><span class="label">上一篇</span>&larr; 03 - RTN 最近舍入量化</span></a><a href="05-awq.html"><span><span class="label">下一篇</span>05 - AWQ 量化详解 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>

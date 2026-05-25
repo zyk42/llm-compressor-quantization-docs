@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpinQuant & QuIP 旋转量化详解 - LLM Compressor 量化文档</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script>
+    MathJax = {
+      tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+      options: { skipHtmlTags: ['code', 'pre'] }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <button class="menu-toggle">&#9776;</button>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>LLM Compressor</h2>
+      <p>量化方法详解文档</p>
+    </div>
+    <nav>
+      <a href="index.html">00 - 总览与快速入门</a>
+      <a href="01-architecture.html">01 - 项目架构解析</a>
+      <a href="02-quantization-fundamentals.html">02 - 量化基础理论</a>
+      <a href="03-rtn-quantization.html">03 - RTN 最近舍入量化</a>
+      <a href="04-gptq.html">04 - GPTQ 量化详解</a>
+      <a href="05-awq.html">05 - AWQ 量化详解</a>
+      <a href="06-autoround.html">06 - AutoRound 量化</a>
+      <a href="07-smoothquant.html">07 - SmoothQuant 详解</a>
+      <a href="08-rotation-quantization.html" class="active">08 - 旋转量化 (SpinQuant/QuIP)</a>
+      <a href="09-imatrix.html">09 - IMatrix 重要性校准</a>
+      <a href="10-quantization-formats.html">10 - 量化格式详解</a>
+      <a href="11-kv-cache-quantization.html">11 - KV Cache 量化</a>
+      <a href="12-advanced-practice.html">12 - 高级实践</a>
+      <a href="13-troubleshooting.html">13 - 问题排查</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <div class="toc">
+        <div class="toc-title">目录</div>
+        <ol>
+          <li><a href="#概述">概述</a></li>
+          <li><a href="#理论基础">理论基础</a></li>
+          <li><a href="#spinquant">SpinQuant</a></li>
+          <li><a href="#quip-quip">QuIP / QuIP#</a></li>
+          <li><a href="#在-llm-compressor-中的实现">在 LLM Compressor 中的实现</a></li>
+          <li><a href="#使用示例">使用示例</a></li>
+          <li><a href="#参数说明">参数说明</a></li>
+          <li><a href="#旋转量化的优缺点">旋转量化的优缺点</a></li>
+          <li><a href="#何时使用旋转量化">何时使用旋转量化</a></li>
+        </ol>
+      </div>
+<h1 id="spinquant-quip-旋转量化详解">SpinQuant & QuIP 旋转量化详解</h1>
+<h2 id="概述">概述</h2>
+<p>旋转量化的核心思想：通过<strong>正交变换（旋转矩阵）</strong>将权重变换到更适合量化的空间。正交变换保持向量的 L2 范数不变，因此不改变模型的数学行为，但可以降低权重分布的"不相干性"（incoherence），使得量化更加均匀。</p>
+<h2 id="理论基础">理论基础</h2>
+<h3 id="相干性与量化误差">相干性与量化误差</h3>
+<p><strong>相干性（Coherence）</strong>衡量权重矩阵中元素大小的不均匀程度：</p>
+<p><div class="formula-block">\[\mu(W) = \frac{n \cdot \max_{i,j} |W_{ij}|^2}{||W||_F^2}\]</div></p>
+<ul>
+<li>相干性高：存在少数极大值，量化时产生大误差</li>
+<li>相干性低：元素大小均匀，量化误差分布均匀</li>
+</ul>
+<p><strong>关键定理</strong>：对于相干性为 \(\mu\) 的矩阵，均匀量化的 MSE 上界为：</p>
+<p><div class="formula-block">\[E[||W - \hat{W}||_F^2] \leq O(\mu \cdot s^2 \cdot n)\]</div></p>
+<p>因此，降低相干性可以直接降低量化误差的理论上界。</p>
+<h3 id="正交变换的保范性">正交变换的保范性</h3>
+<p>对于正交矩阵 \(R\)（\(R^TR = I\)）：</p>
+<p><div class="formula-block">\[||RW||_F = ||W||_F\]</div></p>
+<p>即旋转不改变权重的 Frobenius 范数——模型的"信息量"不变，但分布更均匀。</p>
+<h3 id="hadamard-矩阵">Hadamard 矩阵</h3>
+<p>Hadamard 矩阵是最常用的旋转基：</p>
+<p><div class="formula-block">\[H_1 = [1], \quad H_{2n} = \frac{1}{\sqrt{2}}\begin{bmatrix} H_n & H_n \\ H_n & -H_n \end{bmatrix}\]</div></p>
+<p><strong>性质</strong>：</p>
+<ul>
+<li>正交：\(H^TH = I\)</li>
+<li>仅含 \(\pm 1/\sqrt{n}\)：计算高效</li>
+<li>快速变换：\(O(n \log n)\) 复杂度（类似 FFT）</li>
+<li>降低相干性效果好</li>
+</ul>
+<p>---</p>
+<h2 id="spinquant">SpinQuant</h2>
+<h3 id="算法原理">算法原理</h3>
+<p>SpinQuant 针对 Transformer 架构定义了四类旋转：</p>
+<p><strong>R1：残差流旋转（可融合）</strong></p>
+<ul>
+<li>应用于 Attention 的 Q/K/V 输入和 FFN 的输入</li>
+<li>可以融合到 LayerNorm 和 Linear 层的权重中</li>
+<li><strong>无运行时开销</strong></li>
+</ul>
+<p><strong>R2：头内旋转（可融合）</strong></p>
+<ul>
+<li>在 Attention 的每个头内部应用旋转</li>
+<li>旋转 Q 和 K 的输出（head_dim 维度）</li>
+<li>可融合到 Q/K 投影权重中</li>
+<li><strong>无运行时开销</strong></li>
+</ul>
+<p><strong>R3：FFN 中间旋转（在线）</strong></p>
+<ul>
+<li>在 FFN 的 gate/up 和 down 之间应用</li>
+<li>不能融合（中间有非线性激活函数）</li>
+<li><strong>需要运行时计算</strong></li>
+</ul>
+<p><strong>R4：Attention 输出旋转（在线）</strong></p>
+<ul>
+<li>在 V 投影输出和 O 投影之间应用</li>
+<li>不能融合（中间有 softmax 注意力）</li>
+<li><strong>需要运行时计算</strong></li>
+</ul>
+<h3 id="可融合-vs-在线旋转">可融合 vs 在线旋转</h3>
+<pre><code class="language-text">
+可融合旋转（R1, R2）：
+  W_new = R · W    # 旋转融入权重，推理无额外计算
+  
+在线旋转（R3, R4）：
+  x_rotated = R · x  # 推理时需要额外矩阵乘法
+</code></pre>
+<h3 id="block-diagonal-旋转">Block-Diagonal 旋转</h3>
+<p>当 hidden_size 很大时，完整旋转矩阵太大。使用块对角结构：</p>
+<p><div class="formula-block">\[R = \begin{bmatrix} R_1 & & \\ & R_2 & \\ & & \ddots \end{bmatrix}\]</div></p>
+<p>每个 \(R_i\) 大小为 <code>transform_block_size × transform_block_size</code>。</p>
+<h3 id="transform-类型">Transform 类型</h3>
+<table><thead><tr>
+<th>类型</th>
+<th>要求</th>
+<th>计算效率</th>
+<th>降相干性</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>hadamard</code></td>
+<td>维度须为 2 的幂</td>
+<td>最快 (\(O(n\log n)\))</td>
+<td>好</td>
+</tr>
+<tr>
+<td><code>random-hadamard</code></td>
+<td>任意维度</td>
+<td>较快</td>
+<td>更好</td>
+</tr>
+<tr>
+<td><code>random-matrix</code></td>
+<td>任意维度</td>
+<td>最慢 (\(O(n^2)\))</td>
+<td>最好</td>
+</tr>
+</tbody></table>
+<h3 id="norm-融合与-embedding-居中">Norm 融合与 Embedding 居中</h3>
+<p>SpinQuant 还包含两个预处理步骤：</p>
+<ol>
+<li><strong>Norm 融合</strong>：将 RMSNorm/LayerNorm 的缩放系数融入后续 Linear 权重</li>
+<li><strong>Embedding 居中</strong>：将 Embedding 的均值移除（减小激活范围）</li>
+</ol>
+<pre><code class="language-python">
+# 伪代码
+W_linear = diag(norm_weight) @ W_linear  # norm 融合
+embedding -= embedding.mean(dim=-1, keepdim=True)  # 居中
+</code></pre>
+<h2 id="quip-quip">QuIP / QuIP#</h2>
+<h3 id="算法原理">算法原理</h3>
+<p>QuIP（Quantization with Incoherence Processing）对每个 Linear 层独立应用两个旋转：</p>
+<ul>
+<li><strong>V 旋转（输入侧）</strong>：旋转权重的列方向 → \(W' = W \cdot V^T\)</li>
+<li><strong>U 旋转（输出侧）</strong>：旋转权重的行方向 → \(W'' = U \cdot W'\)</li>
+</ul>
+<p>完整变换：</p>
+<p><div class="formula-block">\[\hat{W} = U \cdot W \cdot V^T\]</div></p>
+<p>推理时：</p>
+<p><div class="formula-block">\[Y = X \cdot W^T = X \cdot V \cdot \hat{W}^T \cdot U^T\]</div></p>
+<h3 id="quip-vs-spinquant-的区别">QuIP vs SpinQuant 的区别</h3>
+<table><thead><tr>
+<th></th>
+<th>QuIP</th>
+<th>SpinQuant</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>旋转粒度</td>
+<td>每个 Linear 独立旋转</td>
+<td>考虑残差连接的全局一致性</td>
+</tr>
+<tr>
+<td>可融合性</td>
+<td>部分可融合</td>
+<td>R1/R2 可融合，R3/R4 在线</td>
+</tr>
+<tr>
+<td>残差连接</td>
+<td>不特殊处理</td>
+<td>设计考虑残差流</td>
+</tr>
+<tr>
+<td>运行时开销</td>
+<td>可能较大</td>
+<td>R1/R2 无开销</td>
+</tr>
+</tbody></table>
+<h3 id="quip-改进">QuIP# 改进</h3>
+<p>QuIP# 在 QuIP 基础上增加了格编码簿（lattice codebook），用非均匀量化进一步提升精度。但 LLM Compressor 中的实现主要使用 Hadamard 旋转部分。</p>
+<h2 id="在-llm-compressor-中的实现">在 LLM Compressor 中的实现</h2>
+<h3 id="spinquantmodifier">SpinQuantModifier</h3>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/transform/spinquant/base.py
+
+class SpinQuantModifier(Modifier):
+    rotations: list[str] = ["R1", "R2", "R4"]  # 应用哪些旋转
+    transform_type: str = "hadamard"            # 旋转矩阵类型
+    transform_block_size: int | None = None     # 块大小（None=full）
+    fuse_norm_linears: bool = True              # 是否融合 Norm
+    center_embeddings: bool = True              # 是否居中 Embedding
+</code></pre>
+<h3 id="quipmodifier">QuIPModifier</h3>
+<pre><code class="language-python">
+# src/llmcompressor/modifiers/transform/quip/base.py
+
+class QuIPModifier(Modifier):
+    rotations: list[str] = ["v", "u"]           # V 旋转和/或 U 旋转
+    transform_type: str = "hadamard"            # 旋转矩阵类型
+    transform_block_size: int | None = None     # 块大小
+</code></pre>
+<h3 id="datafree-特性">DataFree 特性</h3>
+<p>旋转量化的一个重要优势是<strong>不需要校准数据</strong>：</p>
+<ul>
+<li>旋转矩阵可以随机生成（或使用 Hadamard）</li>
+<li>不依赖数据分布</li>
+<li>使用 <code>DataFreePipeline</code></li>
+</ul>
+<h2 id="使用示例">使用示例</h2>
+<h3 id="示例-1spinquant-w4a16-量化">示例 1：SpinQuant + W4A16 量化</h3>
+<pre><code class="language-python">
+from llmcompressor import oneshot
+from llmcompressor.modifiers.transform.spinquant import SpinQuantModifier
+from llmcompressor.modifiers.quantization import QuantizationModifier
+
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype="auto")
+
+recipe = [
+    # SpinQuant 旋转预处理（DataFree，无需校准）
+    SpinQuantModifier(
+        rotations=["R1", "R2", "R4"],
+        transform_type="hadamard",
+    ),
+    # 量化
+    QuantizationModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+    ),
+]
+
+# 无需 dataset（SpinQuant 不需要校准数据）
+# 但 QuantizationModifier 的 W4A16 建议配合 GPTQ
+oneshot(model=model, recipe=recipe)
+</code></pre>
+<h3 id="示例-2spinquant-fp8-datafree">示例 2：SpinQuant + FP8 DataFree</h3>
+<pre><code class="language-python">
+recipe = [
+    SpinQuantModifier(
+        rotations=["R1", "R2"],       # 仅用可融合旋转
+        transform_type="hadamard",
+        fuse_norm_linears=True,
+        center_embeddings=True,
+    ),
+    QuantizationModifier(
+        targets="Linear",
+        scheme="FP8_DYNAMIC",
+        ignore=["lm_head"],
+    ),
+]
+
+# 完全无需校准数据
+oneshot(model=model, recipe=recipe)
+</code></pre>
+<h3 id="示例-3quip-w4a16">示例 3：QuIP + W4A16</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.transform.quip import QuIPModifier
+
+recipe = [
+    QuIPModifier(
+        rotations=["v", "u"],           # V + U 双侧旋转
+        transform_type="random-hadamard",
+        transform_block_size=128,       # 块对角旋转
+    ),
+    QuantizationModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+    ),
+]
+
+oneshot(model=model, recipe=recipe)
+</code></pre>
+<h3 id="示例-4spinquant-gptq-组合最高精度">示例 4：SpinQuant + GPTQ 组合（最高精度）</h3>
+<pre><code class="language-python">
+from llmcompressor.modifiers.gptq import GPTQModifier
+
+recipe = [
+    SpinQuantModifier(rotations=["R1", "R2", "R4"]),
+    GPTQModifier(
+        targets="Linear",
+        scheme="W4A16",
+        ignore=["lm_head"],
+        block_size=128,
+    ),
+]
+
+oneshot(
+    model=model,
+    recipe=recipe,
+    dataset=dataset,
+    num_calibration_samples=512,
+)
+</code></pre>
+<h2 id="参数说明">参数说明</h2>
+<h3 id="spinquant-参数">SpinQuant 参数</h3>
+<table><thead><tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>rotations</code></td>
+<td>["R1","R2","R4"]</td>
+<td>应用的旋转类型</td>
+</tr>
+<tr>
+<td><code>transform_type</code></td>
+<td>"hadamard"</td>
+<td>旋转矩阵类型</td>
+</tr>
+<tr>
+<td><code>transform_block_size</code></td>
+<td>None（全维度）</td>
+<td>块对角大小</td>
+</tr>
+<tr>
+<td><code>fuse_norm_linears</code></td>
+<td>True</td>
+<td>融合 Norm 到 Linear</td>
+</tr>
+<tr>
+<td><code>center_embeddings</code></td>
+<td>True</td>
+<td>Embedding 居中</td>
+</tr>
+</tbody></table>
+<h3 id="quip-参数">QuIP 参数</h3>
+<table><thead><tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>rotations</code></td>
+<td>["v", "u"]</td>
+<td>V 侧和/或 U 侧旋转</td>
+</tr>
+<tr>
+<td><code>transform_type</code></td>
+<td>"hadamard"</td>
+<td>旋转矩阵类型</td>
+</tr>
+<tr>
+<td><code>transform_block_size</code></td>
+<td>None（全维度）</td>
+<td>块对角大小</td>
+</tr>
+</tbody></table>
+<h2 id="旋转量化的优缺点">旋转量化的优缺点</h2>
+<p><strong>优点</strong>：</p>
+<ul>
+<li>无需校准数据（DataFree）</li>
+<li>理论保证：降低量化误差上界</li>
+<li>R1/R2 可融合：无运行时开销</li>
+<li>可与任何量化器组合</li>
+</ul>
+<p><strong>缺点</strong>：</p>
+<ul>
+<li>R3/R4 在线旋转有推理开销</li>
+<li>Hadamard 要求维度为 2 的幂</li>
+<li>降低相干性的效果依赖权重分布</li>
+<li>不能修复量化本身的误差（只是预处理）</li>
+</ul>
+<h2 id="何时使用旋转量化">何时使用旋转量化</h2>
+<table><thead><tr>
+<th>场景</th>
+<th>推荐</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>DataFree 量化（无校准数据）</td>
+<td>SpinQuant R1+R2 + FP8</td>
+</tr>
+<tr>
+<td>追求零推理开销</td>
+<td>仅使用 R1+R2（可融合）</td>
+</tr>
+<tr>
+<td>与 GPTQ/AWQ 组合提升精度</td>
+<td>SpinQuant + GPTQ</td>
+</tr>
+<tr>
+<td>每层独立优化</td>
+<td>QuIP</td>
+</tr>
+<tr>
+<td>Blackwell GPU 部署</td>
+<td>SpinQuant + NVFP4</td>
+</tr>
+</tbody></table>
+
+<div class="page-nav"><a href="07-smoothquant.html"><span><span class="label">上一篇</span>&larr; 07 - SmoothQuant 详解</span></a><a href="09-imatrix.html"><span><span class="label">下一篇</span>09 - IMatrix 重要性校准 &rarr;</span></a></div>
+    </div>
+  </main>
+  <script src="assets/main.js"></script>
+</body>
+</html>
